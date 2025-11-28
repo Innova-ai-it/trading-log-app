@@ -137,7 +137,13 @@ export const recalculateTrades = (trades: Trade[], settings: Settings): Trade[] 
   const chronologicalTrades = [...trades].sort((a, b) => {
     const dateA = new Date(a.date).getTime();
     const dateB = new Date(b.date).getTime();
-    return dateA - dateB;
+    if (dateA !== dateB) return dateA - dateB;
+    
+    // If same date, sort by createdAt timestamp
+    if (a.createdAt && b.createdAt) {
+      return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+    }
+    return 0;
   });
 
   // 2. Pre-calculate Start-of-Day Bankroll for every date
@@ -203,14 +209,20 @@ export const recalculateTrades = (trades: Trade[], settings: Settings): Trade[] 
     const tpThreshold = settings.dailyTP !== 0 ? (dayStartBank * (settings.dailyTP / 100)) : 0;
     const slThreshold = settings.dailySL !== 0 ? (dayStartBank * (settings.dailySL / 100)) : 0;
 
-    // Check thresholds
-    // Logic: If DailyPL >= Calculated TP Value
-    if (settings.dailyTP > 0 && tpThreshold > 0 && dailyPL >= tpThreshold) {
-      tpSl = "TARGET PROFIT";
-    } 
-    // Logic: If DailyPL <= Calculated SL Value (assuming SL setting is negative, e.g., -5%)
-    else if (settings.dailySL < 0 && slThreshold < 0 && dailyPL <= slThreshold) {
-      tpSl = "STOP LOSS";
+    // Check if this is the LAST trade of this date (only assign tag to last trade of the day)
+    const tradesOfSameDay = chronologicalTrades.filter(t => t.date === trade.date && t.result !== TradeResult.OPEN);
+    const isLastTradeOfDay = tradesOfSameDay[tradesOfSameDay.length - 1]?.id === trade.id;
+
+    // Only assign tag if it's the last trade of the day AND threshold is met
+    if (isLastTradeOfDay) {
+      // Logic: If DailyPL >= Calculated TP Value
+      if (settings.dailyTP > 0 && tpThreshold > 0 && dailyPL >= tpThreshold) {
+        tpSl = "TARGET PROFIT";
+      } 
+      // Logic: If DailyPL <= Calculated SL Value (assuming SL setting is negative, e.g., -5%)
+      else if (settings.dailySL < 0 && slThreshold < 0 && dailyPL <= slThreshold) {
+        tpSl = "STOP LOSS";
+      }
     }
 
     return {
@@ -225,6 +237,12 @@ export const recalculateTrades = (trades: Trade[], settings: Settings): Trade[] 
   return computed.sort((a, b) => {
     const dateA = new Date(a.date).getTime();
     const dateB = new Date(b.date).getTime();
-    return dateB - dateA;
+    if (dateA !== dateB) return dateB - dateA;
+    
+    // If same date, sort by createdAt timestamp (newest first)
+    if (a.createdAt && b.createdAt) {
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    }
+    return 0;
   });
 };

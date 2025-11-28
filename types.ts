@@ -48,6 +48,7 @@ export interface Trade {
   dailyPL?: number;
   tpSl?: string;
   notes?: string;
+  createdAt?: string; // Timestamp from database
 }
 
 export interface BankrollSnapshot {

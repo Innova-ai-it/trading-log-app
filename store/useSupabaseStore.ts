@@ -67,7 +67,8 @@ export const useSupabaseStore = create<SupabaseStoreState>((set, get) => ({
         .from('trades')
         .select('*')
         .eq('user_id', user.id)
-        .order('date', { ascending: false });
+        .order('date', { ascending: false })
+        .order('created_at', { ascending: false });
 
       if (error) throw error;
 
@@ -313,6 +314,7 @@ function mapSupabaseToTrade(data: any): Trade {
     dailyPL: data.daily_pl ? Number(data.daily_pl) : undefined,
     tpSl: data.tp_sl || undefined,
     notes: data.notes || undefined,
+    createdAt: data.created_at || undefined,
   };
 }
 
