@@ -58,6 +58,69 @@ const getValue = (row: any, possibleHeaders: string[]): string => {
   return '';
 };
 
+// Helper to find bankroll values in the raw CSV data
+const extractBankrollFromMetadata = (text: string): { initialBank?: number; currentBank?: number } => {
+  const lines = text.split(/\r\n|\n|\r/);
+  let initialBank: number | undefined;
+  let currentBank: number | undefined;
+
+  // Definizione delle possibili varianti per capitale iniziale/attuale
+  const initialBankHeaders = [
+    'cassa iniziale', 'capitale iniziale', 'stake iniziale', 'bankroll iniziale',
+    'initial bank', 'initial bankroll', 'starting balance', 'initial balance',
+    'initial capital', 'starting capital', 'starting bankroll', 'saldo iniziale'
+  ];
+
+  const currentBankHeaders = [
+    'cassa attuale', 'cassa finale', 'capitale attuale', 'capitale finale',
+    'stake attuale', 'bankroll attuale', 'current bank', 'current bankroll',
+    'current balance', 'final balance', 'ending balance', 'saldo attuale',
+    'saldo finale', 'bankroll finale'
+  ];
+
+  // Scansioniamo le prime 20 righe per trovare i valori del bankroll
+  for (let i = 0; i < Math.min(lines.length, 20); i++) {
+    const line = lines[i];
+    const cells = line.split(/[,;]/);
+    
+    if (cells.length < 2) continue;
+    
+    const firstCell = cells[0].toLowerCase().trim();
+    const secondCell = cells[1].trim();
+    
+    // Controllo per capitale iniziale
+    if (initialBank === undefined) {
+      for (const header of initialBankHeaders) {
+        if (firstCell.includes(header)) {
+          const value = parseLocaleNumber(secondCell);
+          if (value > 0) {
+            initialBank = value;
+            break;
+          }
+        }
+      }
+    }
+    
+    // Controllo per capitale attuale
+    if (currentBank === undefined) {
+      for (const header of currentBankHeaders) {
+        if (firstCell.includes(header)) {
+          const value = parseLocaleNumber(secondCell);
+          if (value > 0) {
+            currentBank = value;
+            break;
+          }
+        }
+      }
+    }
+    
+    // Se abbiamo trovato entrambi, possiamo fermarci
+    if (initialBank !== undefined && currentBank !== undefined) break;
+  }
+
+  return { initialBank, currentBank };
+};
+
 // Return type: { trades, initialBank?, currentBank? }
 export interface ParsedCSVData {
   trades: Trade[];
@@ -82,27 +145,8 @@ export const parseCSV = (file: File): Promise<ParsedCSVData> => {
       let headerLineIndex = 0;
       let maxMatches = 0;
       
-      // Extract Initial Bank (B3) and Current Bank (B7) if present
-      let initialBank: number | undefined;
-      let currentBank: number | undefined;
-      
-      // Try to parse B3 (row 2, column 1 in 0-indexed) and B7 (row 6, column 1)
-      // CSV format: each line is a row, columns are comma/semicolon separated
-      if (lines.length > 2) {
-        const row3 = lines[2].split(/[,;]/);
-        if (row3.length > 1) {
-          const b3Value = parseLocaleNumber(row3[1].trim());
-          if (b3Value > 0) initialBank = b3Value;
-        }
-      }
-      
-      if (lines.length > 6) {
-        const row7 = lines[6].split(/[,;]/);
-        if (row7.length > 1) {
-          const b7Value = parseLocaleNumber(row7[1].trim());
-          if (b7Value > 0) currentBank = b7Value;
-        }
-      }
+      // Extract Initial Bank and Current Bank using robust header matching
+      const { initialBank, currentBank } = extractBankrollFromMetadata(text);
       
       const keywords = ['data', 'date', 'competizione', 'competition', 'strategia', 'strategy', 'quota', 'odds', 'profit', 'profitto'];
 
@@ -131,12 +175,30 @@ export const parseCSV = (file: File): Promise<ParsedCSVData> => {
           const trades: Trade[] = [];
           
           results.data.forEach((row: any) => {
-            // Extract core fields
-            const dateStr = getValue(row, ['Data', 'Date']);
-            const competition = getValue(row, ['Competizione', 'Competition', 'League']);
-            const strategy = getValue(row, ['Strategia', 'Strategy', 'Type']);
-            const home = getValue(row, ['Casa', 'Home', 'Team1']);
-            const away = getValue(row, ['Trasferta', 'Away', 'Team2']);
+            // Extract core fields with extensive header variants
+            const dateStr = getValue(row, [
+              'Data', 'Date', 'Giorno', 'Day', 'Fecha', 'Datum'
+            ]);
+            
+            const competition = getValue(row, [
+              'Competizione', 'Competition', 'League', 'Lega', 'Campionato',
+              'Tournament', 'Torneo', 'Championship'
+            ]);
+            
+            const strategy = getValue(row, [
+              'Strategia', 'Strategy', 'Type', 'Tipo', 'Metodo', 'Method',
+              'Sistema', 'System', 'Mercato', 'Market'
+            ]);
+            
+            const home = getValue(row, [
+              'Casa', 'Home', 'Team1', 'Team 1', 'Squadra Casa', 'Home Team',
+              'HomeTeam', 'Casa Team', 'Local'
+            ]);
+            
+            const away = getValue(row, [
+              'Trasferta', 'Away', 'Team2', 'Team 2', 'Squadra Trasferta',
+              'Away Team', 'AwayTeam', 'Trasferta Team', 'Visitante', 'Visitor'
+            ]);
 
             // ROBUST VALIDATION:
             // A valid trade line must have at least a Date OR (Competition AND Strategy).
@@ -150,20 +212,41 @@ export const parseCSV = (file: File): Promise<ParsedCSVData> => {
               return;
             }
 
-            // Normalize Result
+            // Normalize Result with extensive variants
             let result = TradeResult.OPEN;
-            const resStr = getValue(row, ['W/L/V', 'Result', 'Risultato', 'Esito', 'Win', 'Status']).toUpperCase();
+            const resStr = getValue(row, [
+              'W/L/V', 'Result', 'Risultato', 'Esito', 'Win', 'Status',
+              'Outcome', 'State', 'Stato', 'Win/Loss', 'Vincita'
+            ]).toUpperCase();
             
-            if (resStr.includes('WIN') || resStr === '1' || resStr === 'W' || resStr === 'VINTA') result = TradeResult.WIN;
-            else if (resStr.includes('LOSE') || resStr.includes('LOSS') || resStr === '0' || resStr === 'L' || resStr === 'PERSA') result = TradeResult.LOSE;
-            else if (resStr.includes('VOID') || resStr === 'V' || resStr === 'RIMBORSO') result = TradeResult.VOID;
+            if (resStr.includes('WIN') || resStr === '1' || resStr === 'W' || resStr === 'VINTA' || resStr === 'WON') result = TradeResult.WIN;
+            else if (resStr.includes('LOSE') || resStr.includes('LOSS') || resStr === '0' || resStr === 'L' || resStr === 'PERSA' || resStr === 'LOST') result = TradeResult.LOSE;
+            else if (resStr.includes('VOID') || resStr === 'V' || resStr === 'RIMBORSO' || resStr.includes('REFUND')) result = TradeResult.VOID;
             
-            // Parse Numbers
-            const odds = parseLocaleNumber(getValue(row, ['Quota', 'Odds', 'Price']));
-            const stakePct = parseLocaleNumber(getValue(row, ['Stake %', 'StakePercent', 'StakePct']));
-            const stakeEur = parseLocaleNumber(getValue(row, ['Stake €', 'StakeEuro', 'Stake', 'Importo']));
-            const pl = parseLocaleNumber(getValue(row, ['Profit/Loss', 'Profitto', 'P/L', 'Netto', 'Profit']));
-            const roi = parseLocaleNumber(getValue(row, ['ROI', 'Yield']));
+            // Parse Numbers with extensive variants
+            const odds = parseLocaleNumber(getValue(row, [
+              'Quota', 'Odds', 'Price', 'Prezzo', 'Quotazione', 'Odd', 'Cota'
+            ]));
+            
+            const stakePct = parseLocaleNumber(getValue(row, [
+              'Stake %', 'StakePercent', 'StakePct', 'Stake Percentuale',
+              'Percentuale Stake', '% Stake', 'Stake%', 'Puntata %'
+            ]));
+            
+            const stakeEur = parseLocaleNumber(getValue(row, [
+              'Stake €', 'StakeEuro', 'Stake', 'Importo', 'Puntata',
+              'Stake EUR', 'Amount', 'Ammontare', 'Bet Amount', 'Bet'
+            ]));
+            
+            const pl = parseLocaleNumber(getValue(row, [
+              'Profit/Loss', 'Profitto', 'P/L', 'Netto', 'Profit',
+              'ProfitLoss', 'Profit Loss', 'Guadagno', 'Utile',
+              'Gain', 'Loss', 'Net', 'Net Profit', 'Rendimento'
+            ]));
+            
+            const roi = parseLocaleNumber(getValue(row, [
+              'ROI', 'Yield', 'Return', 'Ritorno', 'Rendimento %', 'ROI %'
+            ]));
             
             // If the row has no financial info and no strategy, it's likely garbage
             if (odds === 0 && pl === 0 && !strategy) return;
@@ -179,12 +262,20 @@ export const parseCSV = (file: File): Promise<ParsedCSVData> => {
               stakePercent: stakePct,
               stakeEuro: stakeEur,
               matchedParts: 100, // Default
-              position: getValue(row, ['Posizione', 'Position', 'Side']),
+              position: getValue(row, [
+                'Posizione', 'Position', 'Side', 'Lato', 'Tipo Posizione',
+                'Back/Lay', 'Bet Type', 'Tipo Scommessa'
+              ]),
               result: result,
               profitLoss: pl,
               roi: roi,
-              points: parseLocaleNumber(getValue(row, ['Punti', 'Points'])),
-              notes: getValue(row, ['Note', 'Notes', 'Commenti']),
+              points: parseLocaleNumber(getValue(row, [
+                'Punti', 'Points', 'Punteggio', 'Score', 'Pts'
+              ])),
+              notes: getValue(row, [
+                'Note', 'Notes', 'Commenti', 'Comments', 'Descrizione',
+                'Description', 'Memo', 'Remark', 'Osservazioni'
+              ]),
             };
 
             trades.push(trade);
@@ -216,37 +307,40 @@ export const parseXML = async (file: File): Promise<Trade[]> => {
     const tradeNodes = xmlDoc.querySelectorAll('trade, row, item, Trade, Row, Item');
     
     tradeNodes.forEach(node => {
-      const getText = (tag: string) => {
-        const el = node.querySelector(tag) || node.getElementsByTagName(tag)[0];
-        return el ? el.textContent || '' : '';
+      const getTextMulti = (tags: string[]) => {
+        for (const tag of tags) {
+          const el = node.querySelector(tag) || node.getElementsByTagName(tag)[0];
+          if (el && el.textContent) return el.textContent.trim();
+        }
+        return '';
       };
 
-      // Basic XML mapping - generic approach
-      const dateStr = getText('date') || getText('Data');
+      // Basic XML mapping with extensive tag variants
+      const dateStr = getTextMulti(['Data', 'date', 'Date', 'Giorno', 'Day']);
       if (!dateStr) return; // Skip if no date in XML
 
-      const resultStr = (getText('result') || getText('Result')).toUpperCase();
+      const resultStr = getTextMulti(['Risultato', 'result', 'Result', 'Esito', 'Win', 'Status']).toUpperCase();
       let result = TradeResult.OPEN;
-      if (resultStr.includes('WIN')) result = TradeResult.WIN;
-      else if (resultStr.includes('LOSE')) result = TradeResult.LOSE;
-      else if (resultStr.includes('VOID')) result = TradeResult.VOID;
+      if (resultStr.includes('WIN') || resultStr === 'W' || resultStr === 'VINTA' || resultStr === '1') result = TradeResult.WIN;
+      else if (resultStr.includes('LOSE') || resultStr.includes('LOSS') || resultStr === 'L' || resultStr === 'PERSA' || resultStr === '0') result = TradeResult.LOSE;
+      else if (resultStr.includes('VOID') || resultStr === 'V' || resultStr === 'RIMBORSO') result = TradeResult.VOID;
 
       trades.push({
         id: uuidv4(),
         date: normalizeDate(dateStr),
-        competition: getText('competition') || getText('Competizione'),
-        homeTeam: getText('home') || getText('Casa'),
-        awayTeam: getText('away') || getText('Trasferta'),
-        strategy: getText('strategy') || getText('Strategia'),
-        odds: parseLocaleNumber(getText('odds') || getText('Quota')),
-        stakePercent: parseLocaleNumber(getText('stakePercent') || getText('StakePct')),
-        stakeEuro: parseLocaleNumber(getText('stakeEuro') || getText('Stake')),
+        competition: getTextMulti(['Competizione', 'competition', 'Competition', 'League', 'Lega', 'Campionato']),
+        homeTeam: getTextMulti(['Casa', 'home', 'Home', 'Team1', 'HomeTeam']),
+        awayTeam: getTextMulti(['Trasferta', 'away', 'Away', 'Team2', 'AwayTeam']),
+        strategy: getTextMulti(['Strategia', 'strategy', 'Strategy', 'Type', 'Tipo', 'Mercato', 'Market']),
+        odds: parseLocaleNumber(getTextMulti(['Quota', 'odds', 'Odds', 'Price', 'Prezzo'])),
+        stakePercent: parseLocaleNumber(getTextMulti(['StakePercent', 'stakePercent', 'StakePct', 'Stake%'])),
+        stakeEuro: parseLocaleNumber(getTextMulti(['Stake', 'stakeEuro', 'StakeEuro', 'Importo', 'Puntata', 'Amount'])),
         matchedParts: 100,
-        position: getText('position'),
+        position: getTextMulti(['Posizione', 'position', 'Position', 'Side', 'Lato']),
         result: result,
-        profitLoss: parseLocaleNumber(getText('profitLoss') || getText('Profit')),
-        roi: parseLocaleNumber(getText('roi') || getText('ROI')),
-        notes: getText('notes')
+        profitLoss: parseLocaleNumber(getTextMulti(['Profitto', 'profitLoss', 'ProfitLoss', 'Profit', 'P/L', 'Netto'])),
+        roi: parseLocaleNumber(getTextMulti(['ROI', 'roi', 'Yield', 'Return'])),
+        notes: getTextMulti(['Note', 'notes', 'Notes', 'Commenti', 'Comments', 'Descrizione'])
       });
     });
 
