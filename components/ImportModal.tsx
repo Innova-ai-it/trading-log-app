@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Upload, X, AlertCircle, FileText, Check, AlertTriangle } from 'lucide-react';
-import { parseCSV, parseXML, ParsedCSVData } from '../utils/parsers';
+import { parseCSV, parseXLSX, ParsedCSVData } from '../utils/parsers';
 import { useSupabaseStore } from '../store/useSupabaseStore';
 import { Trade } from '../types';
 
@@ -37,11 +37,10 @@ export const ImportModal: React.FC<ImportModalProps> = ({ isOpen, onClose }) => 
       let data: ParsedCSVData = { trades: [] };
       if (selectedFile.name.toLowerCase().endsWith('.csv')) {
         data = await parseCSV(selectedFile);
-      } else if (selectedFile.name.toLowerCase().endsWith('.xml')) {
-        const trades = await parseXML(selectedFile);
-        data = { trades };
+      } else if (selectedFile.name.toLowerCase().endsWith('.xlsx') || selectedFile.name.toLowerCase().endsWith('.xls')) {
+        data = await parseXLSX(selectedFile);
       } else {
-        throw new Error('Unsupported file format. Please use CSV or XML.');
+        throw new Error('Unsupported file format. Please use CSV or XLSX.');
       }
 
       if (data.trades.length === 0) {
@@ -107,7 +106,7 @@ export const ImportModal: React.FC<ImportModalProps> = ({ isOpen, onClose }) => 
           <div className="border-2 border-dashed border-border rounded-lg p-8 text-center hover:border-primary transition-colors bg-background/50">
             <input 
               type="file" 
-              accept=".csv,.xml" 
+              accept=".csv,.xlsx,.xls" 
               onChange={handleFileChange}
               className="hidden" 
               id="file-upload"
@@ -115,7 +114,7 @@ export const ImportModal: React.FC<ImportModalProps> = ({ isOpen, onClose }) => 
             <label htmlFor="file-upload" className="cursor-pointer flex flex-col items-center">
               <FileText className="w-12 h-12 text-gray-500 mb-4" />
               <span className="text-lg font-medium text-white mb-1">
-                {file ? file.name : "Click to upload CSV or XML"}
+                {file ? file.name : "Click to upload CSV or XLSX"}
               </span>
               <span className="text-sm text-gray-400">
                 Max file size: 5MB
