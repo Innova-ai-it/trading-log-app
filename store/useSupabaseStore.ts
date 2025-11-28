@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { v4 as uuidv4 } from 'uuid';
 import { Trade, Settings, BankrollAdjustment, TradeResult, AdjustmentType } from '../types';
 import { supabase } from '../lib/supabase';
 import { recalculateTrades } from '../utils/helpers';
@@ -198,10 +199,18 @@ export const useSupabaseStore = create<SupabaseStoreState>((set, get) => ({
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('Not authenticated');
 
+      // Map trades - keep the ID as it's required by the database
       const tradesData = newTrades.map(trade => mapTradeToSupabase(trade, user.id));
-      const { error } = await supabase.from('trades').insert(tradesData);
+      
+      // Log first trade to debug
+      console.log('Importing trades, sample:', tradesData[0]);
+      
+      const { error, data } = await supabase.from('trades').insert(tradesData);
 
-      if (error) throw error;
+      if (error) {
+        console.error('Supabase error details:', error);
+        throw new Error(error.message || 'Database insert failed');
+      }
 
       await get().fetchTrades();
     } catch (error) {
@@ -319,27 +328,44 @@ function mapSupabaseToTrade(data: any): Trade {
 }
 
 function mapTradeToSupabase(trade: Trade, userId?: string): any {
-  return {
-    id: trade.id,
+  // Ensure we have a valid UUID for id
+  if (!trade.id) {
+    console.warn('Trade missing ID, generating new one');
+  }
+  
+  const mapped: any = {
+    id: trade.id || uuidv4(), // Ensure ID is always present
     user_id: userId,
     date: trade.date,
-    competition: trade.competition,
-    home_team: trade.homeTeam,
-    away_team: trade.awayTeam,
-    strategy: trade.strategy,
-    odds: trade.odds,
-    stake_percent: trade.stakePercent,
-    stake_euro: trade.stakeEuro,
-    matched_parts: trade.matchedParts,
-    position: trade.position,
-    result: trade.result,
-    profit_loss: trade.profitLoss,
-    roi: trade.roi,
-    points: trade.points,
-    daily_pl: trade.dailyPL,
-    tp_sl: trade.tpSl,
-    notes: trade.notes,
+    competition: trade.competition || '',
+    home_team: trade.homeTeam || '',
+    away_team: trade.awayTeam || '',
+    strategy: trade.strategy || '',
+    odds: trade.odds || 0,
+    stake_percent: trade.stakePercent || 0,
+    stake_euro: trade.stakeEuro || 0,
+    matched_parts: trade.matchedParts || 100,
+    position: trade.position || '',
+    result: trade.result || 'OPEN',
+    profit_loss: trade.profitLoss || 0,
+    roi: trade.roi || 0,
   };
+
+  // Add optional fields only if they have values
+  if (trade.points !== undefined && trade.points !== null) {
+    mapped.points = trade.points;
+  }
+  if (trade.dailyPL !== undefined && trade.dailyPL !== null) {
+    mapped.daily_pl = trade.dailyPL;
+  }
+  if (trade.tpSl) {
+    mapped.tp_sl = trade.tpSl;
+  }
+  if (trade.notes) {
+    mapped.notes = trade.notes;
+  }
+
+  return mapped;
 }
 
 function mapSupabaseToSettings(data: any): Settings {

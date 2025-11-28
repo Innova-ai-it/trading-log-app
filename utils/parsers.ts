@@ -5,10 +5,34 @@ import { Trade, TradeResult } from '../types';
 import { parseLocaleNumber } from './helpers';
 
 // Helper to normalize dates
-const normalizeDate = (rawDate: string): string => {
-  if (!rawDate) return new Date().toISOString().split('T')[0];
+const normalizeDate = (rawDate: string | number): string => {
+  if (!rawDate && rawDate !== 0) return new Date().toISOString().split('T')[0];
   
-  const cleanDate = rawDate.trim();
+  // Handle Excel serial date numbers (days since 1900-01-01)
+  if (typeof rawDate === 'number') {
+    // Excel date serial number (with 1900 leap year bug)
+    const excelEpoch = new Date(1899, 11, 30); // 30 Dec 1899
+    const date = new Date(excelEpoch.getTime() + rawDate * 86400000);
+    
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+  
+  const cleanDate = String(rawDate).trim();
+  
+  // Handle Excel serial as string (e.g. "44197")
+  if (/^\d{5}$/.test(cleanDate)) {
+    const serialNumber = parseInt(cleanDate, 10);
+    const excelEpoch = new Date(1899, 11, 30);
+    const date = new Date(excelEpoch.getTime() + serialNumber * 86400000);
+    
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
   
   // Handle DD/MM/YYYY or DD-MM-YYYY
   if (cleanDate.match(/^\d{1,2}[/-]\d{1,2}[/-]\d{4}/)) {
@@ -79,40 +103,45 @@ const extractBankrollFromMetadata = (text: string): { initialBank?: number; curr
     'saldo finale', 'bankroll finale'
   ];
 
-  // Scansioniamo le prime 20 righe per trovare i valori del bankroll
+  // Scansioniamo le prime 20 righe per trovare i valori del bankroll in tutte le colonne
   for (let i = 0; i < Math.min(lines.length, 20); i++) {
     const line = lines[i];
-    const cells = line.split(/[,;]/);
+    const cells = line.split(/[,;\t]/); // Supporta anche tab
     
     if (cells.length < 2) continue;
     
-    const firstCell = cells[0].toLowerCase().trim();
-    const secondCell = cells[1].trim();
-    
-    // Controllo per capitale iniziale
-    if (initialBank === undefined) {
-      for (const header of initialBankHeaders) {
-        if (firstCell.includes(header)) {
-          const value = parseLocaleNumber(secondCell);
-          if (value > 0) {
-            initialBank = value;
-            break;
+    // Cerca in tutte le colonne della riga, non solo la prima
+    for (let col = 0; col < cells.length - 1; col++) {
+      const cellText = cells[col].toLowerCase().trim();
+      const nextCellValue = cells[col + 1].trim();
+      
+      // Controllo per capitale iniziale
+      if (initialBank === undefined) {
+        for (const header of initialBankHeaders) {
+          if (cellText.includes(header)) {
+            const value = parseLocaleNumber(nextCellValue);
+            if (value > 0) {
+              initialBank = value;
+              break;
+            }
           }
         }
       }
-    }
-    
-    // Controllo per capitale attuale
-    if (currentBank === undefined) {
-      for (const header of currentBankHeaders) {
-        if (firstCell.includes(header)) {
-          const value = parseLocaleNumber(secondCell);
-          if (value > 0) {
-            currentBank = value;
-            break;
+      
+      // Controllo per capitale attuale
+      if (currentBank === undefined) {
+        for (const header of currentBankHeaders) {
+          if (cellText.includes(header)) {
+            const value = parseLocaleNumber(nextCellValue);
+            if (value > 0) {
+              currentBank = value;
+              break;
+            }
           }
         }
       }
+      
+      if (initialBank !== undefined && currentBank !== undefined) break;
     }
     
     // Se abbiamo trovato entrambi, possiamo fermarci
@@ -149,7 +178,11 @@ export const parseCSV = (file: File): Promise<ParsedCSVData> => {
       // Extract Initial Bank and Current Bank using robust header matching
       const { initialBank, currentBank } = extractBankrollFromMetadata(text);
       
-      const keywords = ['data', 'date', 'competizione', 'competition', 'strategia', 'strategy', 'quota', 'odds', 'profit', 'profitto'];
+      const keywords = [
+        'data', 'date', 'competizione', 'competition', 'strategia', 'strategy',
+        'quota', 'odds', 'profit', 'profitto', 'evento', 'event', 'home', 'casa',
+        'away', 'trasferta', 'esito', 'result', 'stake', 'roi', 'points', 'punti'
+      ];
 
       for (let i = 0; i < Math.min(lines.length, 50); i++) {
         const line = lines[i].toLowerCase();
@@ -158,8 +191,8 @@ export const parseCSV = (file: File): Promise<ParsedCSVData> => {
           if (line.includes(k)) matches++;
         });
         
-        // We need at least 2 keywords to consider it a header row to avoid false positives in metadata
-        if (matches > maxMatches && matches >= 2) {
+        // We need at least 3 keywords to consider it a header row to avoid false positives in metadata
+        if (matches > maxMatches && matches >= 3) {
           maxMatches = matches;
           headerLineIndex = i;
         }
@@ -206,6 +239,10 @@ export const parseCSV = (file: File): Promise<ParsedCSVData> => {
             // We skip summary lines like "TOTALE", "CASSA", or empty lines that parsed weirdly.
             if (!dateStr && !competition && !strategy) return;
             
+            // Skip rows with "Evento" = 0 (summary rows)
+            const eventoStr = getValue(row, ['Evento', 'Event', '#', 'N', 'Num']).trim();
+            if (eventoStr === '0') return;
+            
             // Skip rows that look like summaries
             if (competition.toUpperCase().includes('TOTALE') || 
                 competition.toUpperCase().includes('CASSA') ||
@@ -216,12 +253,12 @@ export const parseCSV = (file: File): Promise<ParsedCSVData> => {
             // Normalize Result with extensive variants
             let result = TradeResult.OPEN;
             const resStr = getValue(row, [
-              'W/L/V', 'Result', 'Risultato', 'Esito', 'Win', 'Status',
+              'Esito', 'W/L/V', 'W/L', 'Result', 'Risultato', 'Win', 'Status',
               'Outcome', 'State', 'Stato', 'Win/Loss', 'Vincita'
             ]).toUpperCase();
             
-            if (resStr.includes('WIN') || resStr === '1' || resStr === 'W' || resStr === 'VINTA' || resStr === 'WON') result = TradeResult.WIN;
-            else if (resStr.includes('LOSE') || resStr.includes('LOSS') || resStr === '0' || resStr === 'L' || resStr === 'PERSA' || resStr === 'LOST') result = TradeResult.LOSE;
+            if (resStr.includes('WIN') || resStr.includes('WON') || resStr === '1' || resStr === 'W' || resStr === 'VINTA') result = TradeResult.WIN;
+            else if (resStr.includes('LOSE') || resStr.includes('LOSS') || resStr.includes('LOST') || resStr === '0' || resStr === 'L' || resStr === 'PERSA') result = TradeResult.LOSE;
             else if (resStr.includes('VOID') || resStr === 'V' || resStr === 'RIMBORSO' || resStr.includes('REFUND')) result = TradeResult.VOID;
             
             // Parse Numbers with extensive variants
@@ -330,36 +367,41 @@ export const parseXLSX = async (file: File): Promise<ParsedCSVData> => {
       'saldo finale', 'bankroll finale'
     ];
 
-    // Cerca bankroll nelle prime 20 righe
+    // Cerca bankroll nelle prime 20 righe, in tutte le colonne
     for (let i = 0; i < Math.min(data.length, 20); i++) {
       const row = data[i];
       if (row.length < 2) continue;
       
-      const firstCell = String(row[0] || '').toLowerCase().trim();
-      const secondCell = row[1];
-      
-      if (initialBank === undefined) {
-        for (const header of initialBankHeaders) {
-          if (firstCell.includes(header)) {
-            const value = parseLocaleNumber(String(secondCell));
-            if (value > 0) {
-              initialBank = value;
-              break;
+      // Cerca in tutte le colonne della riga, non solo la prima
+      for (let col = 0; col < row.length - 1; col++) {
+        const cellText = String(row[col] || '').toLowerCase().trim();
+        const nextCellValue = row[col + 1];
+        
+        if (initialBank === undefined) {
+          for (const header of initialBankHeaders) {
+            if (cellText.includes(header)) {
+              const value = parseLocaleNumber(String(nextCellValue));
+              if (value > 0) {
+                initialBank = value;
+                break;
+              }
             }
           }
         }
-      }
-      
-      if (currentBank === undefined) {
-        for (const header of currentBankHeaders) {
-          if (firstCell.includes(header)) {
-            const value = parseLocaleNumber(String(secondCell));
-            if (value > 0) {
-              currentBank = value;
-              break;
+        
+        if (currentBank === undefined) {
+          for (const header of currentBankHeaders) {
+            if (cellText.includes(header)) {
+              const value = parseLocaleNumber(String(nextCellValue));
+              if (value > 0) {
+                currentBank = value;
+                break;
+              }
             }
           }
         }
+        
+        if (initialBank !== undefined && currentBank !== undefined) break;
       }
       
       if (initialBank !== undefined && currentBank !== undefined) break;
@@ -368,7 +410,11 @@ export const parseXLSX = async (file: File): Promise<ParsedCSVData> => {
     // Trova la riga di header (cerca parole chiave tipiche)
     let headerRowIndex = 0;
     let maxMatches = 0;
-    const keywords = ['data', 'date', 'competizione', 'competition', 'strategia', 'strategy', 'quota', 'odds', 'profit', 'profitto'];
+    const keywords = [
+      'data', 'date', 'competizione', 'competition', 'strategia', 'strategy', 
+      'quota', 'odds', 'profit', 'profitto', 'evento', 'event', 'home', 'casa',
+      'away', 'trasferta', 'esito', 'result', 'stake', 'roi', 'points', 'punti'
+    ];
 
     for (let i = 0; i < Math.min(data.length, 50); i++) {
       const row = data[i];
@@ -378,7 +424,8 @@ export const parseXLSX = async (file: File): Promise<ParsedCSVData> => {
         if (rowText.includes(k)) matches++;
       });
       
-      if (matches > maxMatches && matches >= 2) {
+      // Riduciamo la soglia a 3 match per essere più flessibili
+      if (matches > maxMatches && matches >= 3) {
         maxMatches = matches;
         headerRowIndex = i;
       }
@@ -391,18 +438,35 @@ export const parseXLSX = async (file: File): Promise<ParsedCSVData> => {
     for (let i = headerRowIndex + 1; i < data.length; i++) {
       const row = data[i];
       
-      // Crea un oggetto con le colonne
+      // Crea un oggetto con le colonne (preserva i tipi originali, specialmente i numeri per le date Excel)
       const rowObj: any = {};
       headers.forEach((header, idx) => {
-        if (header && row[idx] !== undefined && row[idx] !== null) {
+        if (header && row[idx] !== undefined && row[idx] !== null && row[idx] !== '') {
           rowObj[header] = row[idx];
         }
       });
 
-      // Estrai campi usando getValue (stessa logica del CSV)
-      const dateStr = getValue(rowObj, [
-        'Data', 'Date', 'Giorno', 'Day', 'Fecha', 'Datum'
-      ]);
+      // Estrai data - può essere un numero Excel, quindi non usiamo getValue che converte in stringa
+      let dateValue: string | number = '';
+      const dateHeaders = ['Data', 'Date', 'Giorno', 'Day', 'Fecha', 'Datum'];
+      for (const header of dateHeaders) {
+        if (rowObj[header] !== undefined && rowObj[header] !== null && rowObj[header] !== '') {
+          dateValue = rowObj[header];
+          break;
+        }
+      }
+      
+      // Cerca anche case-insensitive
+      if (!dateValue) {
+        const rowKeys = Object.keys(rowObj);
+        for (const header of dateHeaders) {
+          const foundKey = rowKeys.find(k => k.toLowerCase().trim() === header.toLowerCase());
+          if (foundKey && rowObj[foundKey] !== undefined && rowObj[foundKey] !== null && rowObj[foundKey] !== '') {
+            dateValue = rowObj[foundKey];
+            break;
+          }
+        }
+      }
       
       const competition = getValue(rowObj, [
         'Competizione', 'Competition', 'League', 'Lega', 'Campionato',
@@ -424,8 +488,12 @@ export const parseXLSX = async (file: File): Promise<ParsedCSVData> => {
         'Away Team', 'AwayTeam', 'Trasferta Team', 'Visitante', 'Visitor'
       ]);
 
-      // Validazione
-      if (!dateStr && !competition && !strategy) continue;
+      // Validazione - salta righe vuote o di sommario
+      if (!dateValue && !competition && !strategy) continue;
+      
+      // Salta righe con "Evento" = 0 (sono righe di riepilogo)
+      const eventoStr = getValue(rowObj, ['Evento', 'Event', '#', 'N', 'Num']).trim();
+      if (eventoStr === '0') continue;
       
       if (competition.toUpperCase().includes('TOTALE') || 
           competition.toUpperCase().includes('CASSA') ||
@@ -436,12 +504,12 @@ export const parseXLSX = async (file: File): Promise<ParsedCSVData> => {
       // Normalizza risultato
       let result = TradeResult.OPEN;
       const resStr = getValue(rowObj, [
-        'W/L/V', 'Result', 'Risultato', 'Esito', 'Win', 'Status',
+        'Esito', 'W/L/V', 'W/L', 'Result', 'Risultato', 'Win', 'Status',
         'Outcome', 'State', 'Stato', 'Win/Loss', 'Vincita'
       ]).toUpperCase();
       
-      if (resStr.includes('WIN') || resStr === '1' || resStr === 'W' || resStr === 'VINTA' || resStr === 'WON') result = TradeResult.WIN;
-      else if (resStr.includes('LOSE') || resStr.includes('LOSS') || resStr === '0' || resStr === 'L' || resStr === 'PERSA' || resStr === 'LOST') result = TradeResult.LOSE;
+      if (resStr.includes('WIN') || resStr.includes('WON') || resStr === '1' || resStr === 'W' || resStr === 'VINTA') result = TradeResult.WIN;
+      else if (resStr.includes('LOSE') || resStr.includes('LOSS') || resStr.includes('LOST') || resStr === '0' || resStr === 'L' || resStr === 'PERSA') result = TradeResult.LOSE;
       else if (resStr.includes('VOID') || resStr === 'V' || resStr === 'RIMBORSO' || resStr.includes('REFUND')) result = TradeResult.VOID;
       
       // Parse numeri
@@ -474,7 +542,7 @@ export const parseXLSX = async (file: File): Promise<ParsedCSVData> => {
 
       const trade: Trade = {
         id: uuidv4(),
-        date: normalizeDate(dateStr),
+        date: normalizeDate(dateValue),
         competition: competition,
         homeTeam: home,
         awayTeam: away,

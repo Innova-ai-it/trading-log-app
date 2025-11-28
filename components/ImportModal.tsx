@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Upload, X, AlertCircle, FileText, Check, AlertTriangle } from 'lucide-react';
+import { Upload, X, AlertCircle, FileText, Check, AlertTriangle, Loader2 } from 'lucide-react';
 import { parseCSV, parseXLSX, ParsedCSVData } from '../utils/parsers';
 import { useSupabaseStore } from '../store/useSupabaseStore';
 import { Trade } from '../types';
@@ -64,24 +64,35 @@ export const ImportModal: React.FC<ImportModalProps> = ({ isOpen, onClose }) => 
     }
   };
 
-  const handleConfirm = () => {
-    if (previewData.length > 0) {
-      importTrades(previewData);
+  const handleConfirm = async () => {
+    if (previewData.length === 0) return;
+    
+    setIsProcessing(true);
+    setError(null);
+    
+    try {
+      // Import trades
+      await importTrades(previewData);
       
       // Update settings with extracted bankroll values if present
       if (parsedData?.initialBank) {
-        setSettings({ 
+        await setSettings({ 
           initialBank: parsedData.initialBank,
           currentBank: parsedData.currentBank 
         });
       }
       
+      // Success - close modal and reset state
       onClose();
-      // Reset state
       setFile(null);
       setPreviewData([]);
       setParsedData(null);
       setWarning(null);
+    } catch (err: any) {
+      console.error('Error importing:', err);
+      setError(`Import failed: ${err.message || 'Unknown error. Please check the console for details.'}`);
+    } finally {
+      setIsProcessing(false);
     }
   };
 
@@ -187,11 +198,20 @@ export const ImportModal: React.FC<ImportModalProps> = ({ isOpen, onClose }) => 
           </button>
           <button 
             onClick={handleConfirm}
-            disabled={previewData.length === 0}
+            disabled={previewData.length === 0 || isProcessing}
             className="px-4 py-2 text-sm font-medium bg-primary text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 transition-colors"
           >
-            <Check className="w-4 h-4" />
-            Import Data
+            {isProcessing ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Importing...
+              </>
+            ) : (
+              <>
+                <Check className="w-4 h-4" />
+                Import Data
+              </>
+            )}
           </button>
         </div>
       </div>
