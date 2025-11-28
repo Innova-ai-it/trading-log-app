@@ -1,4 +1,4 @@
-import { Trade, TradeResult, Settings } from '../types';
+import { Trade, TradeResult, Settings, BankrollAdjustment, AdjustmentType } from '../types';
 
 // Format currency
 export const formatCurrency = (value: number) => {
@@ -6,6 +6,23 @@ export const formatCurrency = (value: number) => {
     style: 'currency',
     currency: 'EUR',
   }).format(value);
+};
+
+// Calculate Total Capital Invested (Initial + Deposits - Withdrawals)
+export const calculateTotalCapitalInvested = (
+  initialBank: number,
+  adjustments: BankrollAdjustment[]
+): number => {
+  const adjustmentsSum = adjustments.reduce((sum, adj) => {
+    if (adj.type === AdjustmentType.DEPOSIT) {
+      return sum + adj.amount;
+    } else if (adj.type === AdjustmentType.WITHDRAWAL) {
+      return sum - adj.amount;
+    }
+    return sum;
+  }, 0);
+  
+  return initialBank + adjustmentsSum;
 };
 
 // Format percentage
@@ -59,27 +76,55 @@ export const calculateProfitLoss = (
   return 0; // VOID or OPEN
 };
 
-// Calculate Bankroll Evolution
+// Calculate Bankroll Evolution (considering adjustments)
 export const calculateBankrollHistory = (
   trades: Trade[],
-  initialBankroll: number
+  initialBankroll: number,
+  adjustments: BankrollAdjustment[] = []
 ) => {
-  // Sort trades by date ascending
+  // Combine trades and adjustments, sort by date
   const sortedTrades = [...trades].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  const sortedAdjustments = [...adjustments].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
   
   let currentBalance = initialBankroll;
   const history = [{ date: 'Start', balance: initialBankroll }];
 
-  sortedTrades.forEach((trade) => {
-    // Only count closed trades for bankroll history
-    if (trade.result !== TradeResult.OPEN) {
-      currentBalance += trade.profitLoss;
+  // Merge trades and adjustments by date
+  let tradeIdx = 0;
+  let adjIdx = 0;
+  
+  while (tradeIdx < sortedTrades.length || adjIdx < sortedAdjustments.length) {
+    const trade = sortedTrades[tradeIdx];
+    const adjustment = sortedAdjustments[adjIdx];
+    
+    // Determine which comes first
+    const tradeDate = trade ? new Date(trade.date).getTime() : Infinity;
+    const adjDate = adjustment ? new Date(adjustment.date).getTime() : Infinity;
+    
+    if (tradeDate <= adjDate && trade) {
+      // Process trade
+      if (trade.result !== TradeResult.OPEN) {
+        currentBalance += trade.profitLoss;
+        history.push({
+          date: new Date(trade.date).toLocaleDateString(),
+          balance: currentBalance,
+        });
+      }
+      tradeIdx++;
+    } else if (adjustment) {
+      // Process adjustment
+      if (adjustment.type === AdjustmentType.DEPOSIT) {
+        currentBalance += adjustment.amount;
+      } else {
+        currentBalance -= adjustment.amount;
+      }
       history.push({
-        date: new Date(trade.date).toLocaleDateString(),
+        date: new Date(adjustment.date).toLocaleDateString() + ' (Adj)',
         balance: currentBalance,
       });
+      adjIdx++;
     }
-  });
+  }
 
   return history;
 };

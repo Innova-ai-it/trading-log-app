@@ -1,11 +1,12 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import { Trade, Settings } from '../types';
+import { Trade, Settings, BankrollAdjustment } from '../types';
 import { recalculateTrades } from '../utils/helpers';
 
 interface StoreState {
   trades: Trade[];
   settings: Settings;
+  adjustments: BankrollAdjustment[];
   // Actions
   setSettings: (settings: Partial<Settings>) => void;
   addTrade: (trade: Trade) => void;
@@ -13,6 +14,9 @@ interface StoreState {
   deleteTrade: (id: string) => void;
   importTrades: (newTrades: Trade[]) => void;
   clearAllTrades: () => void;
+  // Adjustments
+  addAdjustment: (adjustment: BankrollAdjustment) => void;
+  deleteAdjustment: (id: string) => void;
   // Legacy support getter/setter
   initialBankroll: number;
   setInitialBankroll: (amount: number) => void;
@@ -33,6 +37,7 @@ export const useStore = create<StoreState>()(
     (set, get) => ({
       trades: [],
       settings: defaultSettings,
+      adjustments: [],
       initialBankroll: 1000, // Syncs with settings.initialBank
 
       setSettings: (newSettings) => {
@@ -89,6 +94,18 @@ export const useStore = create<StoreState>()(
         }),
 
       clearAllTrades: () => set({ trades: [] }),
+
+      addAdjustment: (adjustment) =>
+        set((state) => ({
+          adjustments: [...state.adjustments, adjustment].sort(
+            (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+          )
+        })),
+
+      deleteAdjustment: (id) =>
+        set((state) => ({
+          adjustments: state.adjustments.filter((a) => a.id !== id)
+        })),
     }),
     {
       name: 'sports-trader-storage',

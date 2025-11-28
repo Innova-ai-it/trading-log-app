@@ -5,8 +5,22 @@ export enum TradeResult {
   OPEN = 'OPEN'
 }
 
+export enum AdjustmentType {
+  DEPOSIT = 'DEPOSIT',
+  WITHDRAWAL = 'WITHDRAWAL'
+}
+
+export interface BankrollAdjustment {
+  id: string;
+  date: string;
+  type: AdjustmentType;
+  amount: number;
+  notes?: string;
+}
+
 export interface Settings {
   initialBank: number;
+  currentBank?: number; // Bank attuale importato dal CSV (B7)
   dailyTP: number;
   dailySL: number;
   weeklyTP: number;

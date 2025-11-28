@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Upload, X, AlertCircle, FileText, Check, AlertTriangle } from 'lucide-react';
-import { parseCSV, parseXML } from '../utils/parsers';
-import { useStore } from '../store/useStore';
+import { parseCSV, parseXML, ParsedCSVData } from '../utils/parsers';
+import { useSupabaseStore } from '../store/useSupabaseStore';
 import { Trade } from '../types';
 
 interface ImportModalProps {
@@ -12,11 +12,13 @@ interface ImportModalProps {
 export const ImportModal: React.FC<ImportModalProps> = ({ isOpen, onClose }) => {
   const [file, setFile] = useState<File | null>(null);
   const [previewData, setPreviewData] = useState<Trade[]>([]);
+  const [parsedData, setParsedData] = useState<ParsedCSVData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   
-  const importTrades = useStore((state) => state.importTrades);
+  const importTrades = useSupabaseStore((state) => state.importTrades);
+  const setSettings = useSupabaseStore((state) => state.setSettings);
 
   if (!isOpen) return null;
 
@@ -28,22 +30,33 @@ export const ImportModal: React.FC<ImportModalProps> = ({ isOpen, onClose }) => 
     setError(null);
     setWarning(null);
     setPreviewData([]);
+    setParsedData(null);
     setIsProcessing(true);
 
     try {
-      let data: Trade[] = [];
+      let data: ParsedCSVData = { trades: [] };
       if (selectedFile.name.toLowerCase().endsWith('.csv')) {
         data = await parseCSV(selectedFile);
       } else if (selectedFile.name.toLowerCase().endsWith('.xml')) {
-        data = await parseXML(selectedFile);
+        const trades = await parseXML(selectedFile);
+        data = { trades };
       } else {
         throw new Error('Unsupported file format. Please use CSV or XML.');
       }
 
-      if (data.length === 0) {
+      if (data.trades.length === 0) {
         setWarning('No valid trades found. Please check if the file format matches the columns or if the file is empty.');
       } else {
-        setPreviewData(data);
+        setPreviewData(data.trades);
+        setParsedData(data);
+        
+        // Show info about extracted bankroll values
+        if (data.initialBank || data.currentBank) {
+          let msg = 'Bankroll data extracted from CSV: ';
+          if (data.initialBank) msg += `Initial Balance: ${data.initialBank.toFixed(2)}€`;
+          if (data.currentBank) msg += ` | Current Balance: ${data.currentBank.toFixed(2)}€`;
+          setWarning(msg);
+        }
       }
     } catch (err: any) {
       setError(err.message || 'Error parsing file');
@@ -55,10 +68,20 @@ export const ImportModal: React.FC<ImportModalProps> = ({ isOpen, onClose }) => 
   const handleConfirm = () => {
     if (previewData.length > 0) {
       importTrades(previewData);
+      
+      // Update settings with extracted bankroll values if present
+      if (parsedData?.initialBank) {
+        setSettings({ 
+          initialBank: parsedData.initialBank,
+          currentBank: parsedData.currentBank 
+        });
+      }
+      
       onClose();
       // Reset state
       setFile(null);
       setPreviewData([]);
+      setParsedData(null);
       setWarning(null);
     }
   };

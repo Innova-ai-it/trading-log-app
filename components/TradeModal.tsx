@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { X, Save, Calculator } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 import { Trade, TradeResult } from '../types';
-import { useStore } from '../store/useStore';
+import { useSupabaseStore } from '../store/useSupabaseStore';
 import { calculateProfitLoss } from '../utils/helpers';
 
 interface TradeModalProps {
@@ -28,7 +28,8 @@ const emptyTrade: Partial<Trade> = {
 
 export const TradeModal: React.FC<TradeModalProps> = ({ isOpen, onClose, editTrade }) => {
   const [formData, setFormData] = useState<Partial<Trade>>(emptyTrade);
-  const { addTrade, updateTrade, initialBankroll } = useStore();
+  const { addTrade, updateTrade, settings } = useSupabaseStore();
+  const initialBankroll = settings.initialBank;
   const [isManualPL, setIsManualPL] = useState(false);
 
   useEffect(() => {

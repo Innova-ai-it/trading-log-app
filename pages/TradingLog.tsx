@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { useStore } from '../store/useStore';
+import { useSupabaseStore } from '../store/useSupabaseStore';
 import { 
   Plus, Upload, Search, Filter, Trash2, Edit2, 
   ChevronLeft, ChevronRight, Clock
@@ -10,7 +10,7 @@ import { ImportModal } from '../components/ImportModal';
 import { TradeModal } from '../components/TradeModal';
 
 const TradingLog: React.FC = () => {
-  const { trades, deleteTrade, clearAllTrades } = useStore();
+  const { trades, deleteTrade, clearAllTrades } = useSupabaseStore();
   const [searchTerm, setSearchTerm] = useState('');
   const [filterResult, setFilterResult] = useState<string>('ALL');
   const [currentPage, setCurrentPage] = useState(1);
@@ -96,15 +96,15 @@ const TradingLog: React.FC = () => {
           <div className="flex items-center gap-2 px-3 py-2 bg-background border border-border rounded-lg">
             <Filter className="w-4 h-4 text-gray-400" />
             <select 
-              className="bg-transparent text-sm text-white outline-none cursor-pointer"
+              className="bg-transparent text-sm text-white outline-none cursor-pointer [&>option]:bg-gray-900 [&>option]:text-white [&>option]:py-2"
               value={filterResult}
               onChange={(e) => setFilterResult(e.target.value)}
             >
-              <option value="ALL">All Results</option>
-              <option value={TradeResult.WIN}>Win</option>
-              <option value={TradeResult.LOSE}>Lose</option>
-              <option value={TradeResult.VOID}>Void</option>
-              <option value={TradeResult.OPEN}>Open</option>
+              <option value="ALL" className="bg-gray-900 text-white">All Results</option>
+              <option value={TradeResult.WIN} className="bg-gray-900 text-white">Win</option>
+              <option value={TradeResult.LOSE} className="bg-gray-900 text-white">Lose</option>
+              <option value={TradeResult.VOID} className="bg-gray-900 text-white">Void</option>
+              <option value={TradeResult.OPEN} className="bg-gray-900 text-white">Open</option>
             </select>
           </div>
           

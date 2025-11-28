@@ -58,14 +58,21 @@ const getValue = (row: any, possibleHeaders: string[]): string => {
   return '';
 };
 
-export const parseCSV = (file: File): Promise<Trade[]> => {
+// Return type: { trades, initialBank?, currentBank? }
+export interface ParsedCSVData {
+  trades: Trade[];
+  initialBank?: number;
+  currentBank?: number;
+}
+
+export const parseCSV = (file: File): Promise<ParsedCSVData> => {
   return new Promise((resolve) => {
     const reader = new FileReader();
     
     reader.onload = (e) => {
       const text = e.target?.result as string;
       if (!text) {
-        resolve([]);
+        resolve({ trades: [] });
         return;
       }
 
@@ -74,6 +81,28 @@ export const parseCSV = (file: File): Promise<Trade[]> => {
       const lines = text.split(/\r\n|\n|\r/);
       let headerLineIndex = 0;
       let maxMatches = 0;
+      
+      // Extract Initial Bank (B3) and Current Bank (B7) if present
+      let initialBank: number | undefined;
+      let currentBank: number | undefined;
+      
+      // Try to parse B3 (row 2, column 1 in 0-indexed) and B7 (row 6, column 1)
+      // CSV format: each line is a row, columns are comma/semicolon separated
+      if (lines.length > 2) {
+        const row3 = lines[2].split(/[,;]/);
+        if (row3.length > 1) {
+          const b3Value = parseLocaleNumber(row3[1].trim());
+          if (b3Value > 0) initialBank = b3Value;
+        }
+      }
+      
+      if (lines.length > 6) {
+        const row7 = lines[6].split(/[,;]/);
+        if (row7.length > 1) {
+          const b7Value = parseLocaleNumber(row7[1].trim());
+          if (b7Value > 0) currentBank = b7Value;
+        }
+      }
       
       const keywords = ['data', 'date', 'competizione', 'competition', 'strategia', 'strategy', 'quota', 'odds', 'profit', 'profitto'];
 
@@ -162,16 +191,16 @@ export const parseCSV = (file: File): Promise<Trade[]> => {
           });
 
           // Always resolve with whatever we found, never fail
-          resolve(trades);
+          resolve({ trades, initialBank, currentBank });
         },
         error: (error) => {
           console.warn("CSV Parse error:", error);
-          resolve([]); // Fallback to empty, don't throw
+          resolve({ trades: [] }); // Fallback to empty, don't throw
         }
       });
     };
 
-    reader.onerror = () => resolve([]);
+    reader.onerror = () => resolve({ trades: [] });
     reader.readAsText(file, 'UTF-8');
   });
 };

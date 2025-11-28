@@ -1,16 +1,22 @@
-import React, { useMemo } from 'react';
-import { useStore } from '../store/useStore';
+import React, { useMemo, useState } from 'react';
+import { useSupabaseStore } from '../store/useSupabaseStore';
 import { 
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   BarChart, Bar, PieChart, Pie, Cell, Legend
 } from 'recharts';
-import { TrendingUp, TrendingDown, DollarSign, Activity, Award, Target, Ban, Calendar } from 'lucide-react';
-import { calculateBankrollHistory, formatCurrency } from '../utils/helpers';
-import { TradeResult } from '../types';
+import { TrendingUp, TrendingDown, DollarSign, Activity, Award, Target, Ban, Calendar, PlusCircle } from 'lucide-react';
+import { calculateBankrollHistory, calculateTotalCapitalInvested, formatCurrency } from '../utils/helpers';
+import { TradeResult, AdjustmentType } from '../types';
+import { AdjustmentModal } from '../components/AdjustmentModal';
 
 const Dashboard: React.FC = () => {
-  const { trades, settings } = useStore();
+  const { trades, settings, adjustments } = useSupabaseStore();
   const initialBankroll = settings.initialBank;
+  const totalCapitalInvested = useMemo(() => 
+    calculateTotalCapitalInvested(initialBankroll, adjustments), 
+    [initialBankroll, adjustments]
+  );
+  const [isAdjustmentModalOpen, setAdjustmentModalOpen] = useState(false);
 
   const metrics = useMemo(() => {
     const totalTrades = trades.length;
@@ -20,8 +26,9 @@ const Dashboard: React.FC = () => {
     const winRate = totalTrades > 0 ? (wins / (wins + losses)) * 100 : 0;
     
     const totalProfit = trades.reduce((sum, t) => sum + t.profitLoss, 0);
-    const currentBankroll = initialBankroll + totalProfit;
-    const roi = totalTrades > 0 ? (totalProfit / initialBankroll) * 100 : 0;
+    const currentBankroll = totalCapitalInvested + totalProfit;
+    // ROI corretto: basato sul capitale totale investito (inclusi depositi/prelievi)
+    const roi = totalTrades > 0 && totalCapitalInvested > 0 ? (totalProfit / totalCapitalInvested) * 100 : 0;
 
     const sortedByProfit = [...trades].sort((a, b) => b.profitLoss - a.profitLoss);
     const bestTrade = sortedByProfit[0];
@@ -60,7 +67,10 @@ const Dashboard: React.FC = () => {
     };
   }, [trades, initialBankroll]);
 
-  const bankrollHistory = useMemo(() => calculateBankrollHistory(trades, initialBankroll), [trades, initialBankroll]);
+  const bankrollHistory = useMemo(() => 
+    calculateBankrollHistory(trades, initialBankroll, adjustments), 
+    [trades, initialBankroll, adjustments]
+  );
 
   // Strategy Performance
   const strategyData = useMemo(() => {
@@ -88,6 +98,13 @@ const Dashboard: React.FC = () => {
           <h1 className="text-2xl font-bold text-white">Dashboard</h1>
           <p className="text-gray-400">Overview of your trading performance</p>
         </div>
+        <button 
+          onClick={() => setAdjustmentModalOpen(true)}
+          className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded-lg text-white text-sm font-medium transition-colors shadow-lg shadow-purple-500/20"
+        >
+          <PlusCircle className="w-4 h-4" />
+          Deposit/Withdrawal
+        </button>
       </div>
 
       {/* KPI Cards */}
@@ -103,7 +120,12 @@ const Dashboard: React.FC = () => {
             </div>
           </div>
           <div className="mt-4 text-sm text-gray-400">
-            Started: {formatCurrency(initialBankroll)}
+            Invested Capital: {formatCurrency(totalCapitalInvested)}
+            {adjustments.length > 0 && (
+              <span className="text-xs ml-2 text-blue-400">
+                ({adjustments.length} adj.)
+              </span>
+            )}
           </div>
         </div>
 
@@ -279,6 +301,55 @@ const Dashboard: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Adjustments List (if any) */}
+      {adjustments.length > 0 && (
+        <div className="bg-surface p-6 rounded-xl border border-border">
+          <h3 className="text-lg font-semibold text-white mb-4">Deposits & Withdrawals</h3>
+          <div className="space-y-2">
+            {adjustments.slice(0, 5).map((adj) => (
+              <div 
+                key={adj.id} 
+                className="flex justify-between items-center p-3 bg-background/50 rounded-lg hover:bg-background transition-colors"
+              >
+                <div className="flex items-center gap-3">
+                  {adj.type === AdjustmentType.DEPOSIT ? (
+                    <div className="p-2 bg-green-500/20 rounded-lg">
+                      <TrendingUp className="w-4 h-4 text-green-500" />
+                    </div>
+                  ) : (
+                    <div className="p-2 bg-red-500/20 rounded-lg">
+                      <TrendingDown className="w-4 h-4 text-red-500" />
+                    </div>
+                  )}
+                  <div>
+                    <p className="text-sm font-medium text-white">
+                      {adj.type === AdjustmentType.DEPOSIT ? 'Deposit' : 'Withdrawal'}
+                    </p>
+                    <p className="text-xs text-gray-500">{new Date(adj.date).toLocaleDateString('en-US')}</p>
+                    {adj.notes && <p className="text-xs text-gray-400 mt-1">{adj.notes}</p>}
+                  </div>
+                </div>
+                <div className={`text-lg font-bold font-mono ${
+                  adj.type === AdjustmentType.DEPOSIT ? 'text-green-400' : 'text-red-400'
+                }`}>
+                  {adj.type === AdjustmentType.DEPOSIT ? '+' : '-'}{formatCurrency(adj.amount)}
+                </div>
+              </div>
+            ))}
+            {adjustments.length > 5 && (
+              <p className="text-xs text-gray-500 text-center pt-2">
+                ...and {adjustments.length - 5} more
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
+      <AdjustmentModal 
+        isOpen={isAdjustmentModalOpen} 
+        onClose={() => setAdjustmentModalOpen(false)} 
+      />
     </div>
   );
 };
