@@ -4,7 +4,7 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   BarChart, Bar, PieChart, Pie, Cell, Legend
 } from 'recharts';
-import { TrendingUp, TrendingDown, DollarSign, Activity, Award, Target, Ban, Calendar, PlusCircle } from 'lucide-react';
+import { TrendingUp, TrendingDown, DollarSign, Activity, Award, Target, Ban, Calendar, PlusCircle, Trophy, Zap } from 'lucide-react';
 import { calculateBankrollHistory, calculateTotalCapitalInvested, formatCurrency } from '../utils/helpers';
 import { TradeResult, AdjustmentType } from '../types';
 import { AdjustmentModal } from '../components/AdjustmentModal';
@@ -58,12 +58,51 @@ const Dashboard: React.FC = () => {
       worstDay = { date: '-', profit: 0 };
     }
 
+    // Profit Factor: (Total Wins / Total Losses)
+    const totalWinAmount = trades.filter(t => t.profitLoss > 0).reduce((sum, t) => sum + t.profitLoss, 0);
+    const totalLossAmount = Math.abs(trades.filter(t => t.profitLoss < 0).reduce((sum, t) => sum + t.profitLoss, 0));
+    const profitFactor = totalLossAmount > 0 ? totalWinAmount / totalLossAmount : totalWinAmount > 0 ? 999 : 0;
+
+    // Average Profit per Trade
+    const avgProfitPerTrade = totalTrades > 0 ? totalProfit / totalTrades : 0;
+
+    // Expectancy
+    const avgWin = wins > 0 ? totalWinAmount / wins : 0;
+    const avgLoss = losses > 0 ? totalLossAmount / losses : 0;
+    const expectancy = totalTrades > 0 ? (winRate / 100) * avgWin - ((100 - winRate) / 100) * avgLoss : 0;
+
+    // Consecutive Streaks
+    let currentStreak = 0;
+    let maxWinStreak = 0;
+    let maxLossStreak = 0;
+    let lastResult: TradeResult | null = null;
+
+    [...trades].reverse().forEach(t => {
+      if (t.result === TradeResult.VOID) return;
+      
+      if (lastResult === null || t.result === lastResult) {
+        currentStreak++;
+      } else {
+        currentStreak = 1;
+      }
+
+      if (t.result === TradeResult.WIN) {
+        maxWinStreak = Math.max(maxWinStreak, currentStreak);
+      } else if (t.result === TradeResult.LOSE) {
+        maxLossStreak = Math.max(maxLossStreak, currentStreak);
+      }
+      
+      lastResult = t.result;
+    });
+
     return { 
       totalTrades, wins, losses, voids, winRate, 
       totalProfit, currentBankroll, roi, 
       bestTrade, worstTrade,
       dailyTPHits, dailySLHits,
-      bestDay, worstDay
+      bestDay, worstDay,
+      profitFactor, avgProfitPerTrade, expectancy,
+      maxWinStreak, maxLossStreak
     };
   }, [trades, initialBankroll]);
 
@@ -83,6 +122,33 @@ const Dashboard: React.FC = () => {
       .map(([name, value]) => ({ name, value }))
       .sort((a, b) => b.value - a.value)
       .slice(0, 5); // Top 5
+  }, [trades]);
+
+  // Competition Performance
+  const competitionData = useMemo(() => {
+    const map = new Map<string, { profit: number; count: number }>();
+    trades.forEach(t => {
+      if (!t.competition || t.competition.trim() === '') return;
+      const current = map.get(t.competition) || { profit: 0, count: 0 };
+      map.set(t.competition, { 
+        profit: current.profit + t.profitLoss, 
+        count: current.count + 1 
+      });
+    });
+    
+    const sorted = Array.from(map.entries())
+      .map(([name, data]) => ({ 
+        name, 
+        profit: data.profit,
+        count: data.count,
+        avgProfit: data.profit / data.count
+      }))
+      .sort((a, b) => b.profit - a.profit);
+    
+    return {
+      best: sorted.slice(0, 5),
+      worst: sorted.slice(-5).reverse()
+    };
   }, [trades]);
 
   const pieData = [
@@ -177,6 +243,73 @@ const Dashboard: React.FC = () => {
         </div>
       </div>
 
+      {/* Additional Metrics Row */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="bg-surface p-6 rounded-xl border border-border">
+          <div className="flex justify-between items-start">
+            <div>
+              <p className="text-sm text-gray-400">Profit Factor</p>
+              <h3 className={`text-2xl font-bold mt-1 ${metrics.profitFactor >= 1.5 ? 'text-success' : metrics.profitFactor >= 1 ? 'text-yellow-500' : 'text-danger'}`}>
+                {metrics.profitFactor >= 999 ? '∞' : metrics.profitFactor.toFixed(2)}
+              </h3>
+            </div>
+            <div className="p-2 bg-cyan-500/20 rounded-lg text-cyan-500">
+              <Zap className="w-5 h-5" />
+            </div>
+          </div>
+          <div className="mt-4 text-sm text-gray-400">
+            {metrics.profitFactor >= 1.5 ? 'Excellent' : metrics.profitFactor >= 1 ? 'Good' : 'Poor'}
+          </div>
+        </div>
+
+        <div className="bg-surface p-6 rounded-xl border border-border">
+          <div className="flex justify-between items-start">
+            <div>
+              <p className="text-sm text-gray-400">Avg Profit/Trade</p>
+              <h3 className={`text-2xl font-bold mt-1 ${metrics.avgProfitPerTrade >= 0 ? 'text-success' : 'text-danger'}`}>
+                {metrics.avgProfitPerTrade >= 0 ? '+' : ''}{formatCurrency(metrics.avgProfitPerTrade)}
+              </h3>
+            </div>
+            <div className="p-2 bg-indigo-500/20 rounded-lg text-indigo-500">
+              <Activity className="w-5 h-5" />
+            </div>
+          </div>
+          <div className="mt-4 text-sm text-gray-400">
+            Expectancy: {formatCurrency(metrics.expectancy)}
+          </div>
+        </div>
+
+        <div className="bg-surface p-6 rounded-xl border border-border">
+          <div className="flex justify-between items-start">
+            <div>
+              <p className="text-sm text-gray-400">Max Win Streak</p>
+              <h3 className="text-2xl font-bold text-success mt-1">{metrics.maxWinStreak}</h3>
+            </div>
+            <div className="p-2 bg-green-500/20 rounded-lg text-green-500">
+              <Trophy className="w-5 h-5" />
+            </div>
+          </div>
+          <div className="mt-4 text-sm text-gray-400">
+            Consecutive Wins
+          </div>
+        </div>
+
+        <div className="bg-surface p-6 rounded-xl border border-border">
+          <div className="flex justify-between items-start">
+            <div>
+              <p className="text-sm text-gray-400">Max Loss Streak</p>
+              <h3 className="text-2xl font-bold text-danger mt-1">{metrics.maxLossStreak}</h3>
+            </div>
+            <div className="p-2 bg-red-500/20 rounded-lg text-red-500">
+              <Ban className="w-5 h-5" />
+            </div>
+          </div>
+          <div className="mt-4 text-sm text-gray-400">
+            Consecutive Losses
+          </div>
+        </div>
+      </div>
+
       {/* Charts Row 1 */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Bankroll Growth */}
@@ -262,7 +395,7 @@ const Dashboard: React.FC = () => {
           </div>
         </div>
 
-        {/* Best/Worst */}
+        {/* Best/Worst Days */}
         <div className="bg-surface p-6 rounded-xl border border-border flex flex-col gap-4">
           <h3 className="text-lg font-semibold text-white">Extremes</h3>
           
@@ -301,6 +434,69 @@ const Dashboard: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Competition Performance */}
+      {competitionData.best.length > 0 && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Best Competitions */}
+          <div className="bg-surface p-6 rounded-xl border border-border">
+            <div className="flex items-center gap-2 mb-6">
+              <Trophy className="w-5 h-5 text-green-500" />
+              <h3 className="text-lg font-semibold text-white">Best Competitions</h3>
+            </div>
+            <div className="space-y-3">
+              {competitionData.best.map((comp, idx) => (
+                <div 
+                  key={comp.name} 
+                  className="flex justify-between items-center p-3 bg-green-900/10 border border-green-500/20 rounded-lg hover:bg-green-900/20 transition-colors"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="flex items-center justify-center w-8 h-8 rounded-full bg-green-500/20 text-green-400 font-bold text-sm">
+                      {idx + 1}
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-white">{comp.name}</p>
+                      <p className="text-xs text-gray-400">{comp.count} trades • Avg: {formatCurrency(comp.avgProfit)}</p>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-lg font-bold text-green-400 font-mono">+{formatCurrency(comp.profit)}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Worst Competitions */}
+          <div className="bg-surface p-6 rounded-xl border border-border">
+            <div className="flex items-center gap-2 mb-6">
+              <Ban className="w-5 h-5 text-red-500" />
+              <h3 className="text-lg font-semibold text-white">Worst Competitions</h3>
+            </div>
+            <div className="space-y-3">
+              {competitionData.worst.map((comp, idx) => (
+                <div 
+                  key={comp.name} 
+                  className="flex justify-between items-center p-3 bg-red-900/10 border border-red-500/20 rounded-lg hover:bg-red-900/20 transition-colors"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="flex items-center justify-center w-8 h-8 rounded-full bg-red-500/20 text-red-400 font-bold text-sm">
+                      {idx + 1}
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-white">{comp.name}</p>
+                      <p className="text-xs text-gray-400">{comp.count} trades • Avg: {formatCurrency(comp.avgProfit)}</p>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-lg font-bold text-red-400 font-mono">{formatCurrency(comp.profit)}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Adjustments List (if any) */}
       {adjustments.length > 0 && (

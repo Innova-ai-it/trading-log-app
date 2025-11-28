@@ -8,6 +8,7 @@ import { TradeResult, Trade } from '../types';
 import { formatCurrency } from '../utils/helpers';
 import { ImportModal } from '../components/ImportModal';
 import { TradeModal } from '../components/TradeModal';
+import { DailyTargets } from '../components/DailyTargets';
 
 const TradingLog: React.FC = () => {
   const { trades, deleteTrade, clearAllTrades } = useSupabaseStore();
@@ -91,6 +92,9 @@ const TradingLog: React.FC = () => {
             onChange={(e) => setSearchTerm(e.target.value)}
           />
         </div>
+        
+        {/* Daily Targets */}
+        <DailyTargets />
         
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2 px-3 py-2 bg-background border border-border rounded-lg">

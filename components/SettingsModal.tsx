@@ -145,7 +145,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
               <p className="text-[10px] text-gray-500">Use negative value (e.g. -15%)</p>
             </div>
           </div>
-        </form>
 
           <div className="p-4 border-t border-border flex justify-end gap-3 flex-shrink-0 bg-surface">
             <button
@@ -163,6 +162,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
               Save Settings
             </button>
           </div>
+        </form>
       </div>
     </div>
   );
