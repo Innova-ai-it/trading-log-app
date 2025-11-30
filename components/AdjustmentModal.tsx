@@ -148,10 +148,9 @@ export const AdjustmentModal: React.FC<AdjustmentModalProps> = ({ isOpen, onClos
                 : '⚠ Withdrawal will decrease invested capital and will be considered in ROI calculation.'}
             </p>
           </div>
-        </form>
 
           {/* Actions */}
-          <div className="flex justify-end gap-3 p-4 border-t border-border flex-shrink-0 bg-surface">
+          <div className="flex justify-end gap-3 pt-4 border-t border-border flex-shrink-0">
             <button
               type="button"
               onClick={onClose}
@@ -171,6 +170,7 @@ export const AdjustmentModal: React.FC<AdjustmentModalProps> = ({ isOpen, onClos
               Save {type === AdjustmentType.DEPOSIT ? 'Deposit' : 'Withdrawal'}
             </button>
           </div>
+        </form>
       </div>
     </div>
   );

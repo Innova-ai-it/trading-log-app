@@ -1,9 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { X, Save, Calculator } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 import { Trade, TradeResult } from '../types';
 import { useSupabaseStore } from '../store/useSupabaseStore';
-import { calculateProfitLoss } from '../utils/helpers';
+import { calculateProfitLoss, calculateTotalCapitalInvested } from '../utils/helpers';
 
 interface TradeModalProps {
   isOpen: boolean;
@@ -28,9 +28,15 @@ const emptyTrade: Partial<Trade> = {
 
 export const TradeModal: React.FC<TradeModalProps> = ({ isOpen, onClose, editTrade }) => {
   const [formData, setFormData] = useState<Partial<Trade>>(emptyTrade);
-  const { addTrade, updateTrade, settings } = useSupabaseStore();
-  const initialBankroll = settings.initialBank;
+  const { addTrade, updateTrade, settings, trades, adjustments } = useSupabaseStore();
   const [isManualPL, setIsManualPL] = useState(false);
+
+  // Calculate current bankroll in real-time
+  const currentBankroll = useMemo(() => {
+    const totalCapitalInvested = calculateTotalCapitalInvested(settings.initialBank || 1000, adjustments);
+    const totalProfit = trades.reduce((sum, t) => sum + (t.profitLoss || 0), 0);
+    return totalCapitalInvested + totalProfit;
+  }, [settings.initialBank, adjustments, trades]);
 
   useEffect(() => {
     if (editTrade) {
@@ -47,13 +53,13 @@ export const TradeModal: React.FC<TradeModalProps> = ({ isOpen, onClose, editTra
     }
   }, [editTrade, isOpen]);
 
-  // Phase 1: Auto-calc stake € based on %
+  // Phase 1: Auto-calc stake € based on % of current bankroll
   useEffect(() => {
-    if (formData.stakePercent && initialBankroll) {
-      const calculatedStake = (initialBankroll * formData.stakePercent) / 100;
+    if (formData.stakePercent && currentBankroll > 0) {
+      const calculatedStake = (currentBankroll * formData.stakePercent) / 100;
       setFormData(prev => ({ ...prev, stakeEuro: calculatedStake }));
     }
-  }, [formData.stakePercent, initialBankroll]);
+  }, [formData.stakePercent, currentBankroll]);
 
   // Phase 2: Auto-calc P/L based on Result, Odds, Stake
   // Only runs if the user hasn't manually edited the P/L field recently OR if they just changed the result type
@@ -194,6 +200,20 @@ export const TradeModal: React.FC<TradeModalProps> = ({ isOpen, onClose, editTra
                 value={formData.strategy}
                 onChange={(e) => handleChange('strategy', e.target.value)}
               />
+            </div>
+
+            {/* Position (Back/Lay) - Solo informativo */}
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-gray-300">Position</label>
+              <select
+                className="w-full bg-background border border-border rounded-lg p-2.5 text-white focus:ring-2 focus:ring-primary outline-none"
+                value={formData.position || ''}
+                onChange={(e) => handleChange('position', e.target.value)}
+              >
+                <option value="">-- Select --</option>
+                <option value="BACK">Back</option>
+                <option value="LAY">Lay</option>
+              </select>
             </div>
 
             {/* Odds */}

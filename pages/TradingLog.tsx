@@ -81,8 +81,9 @@ const TradingLog: React.FC = () => {
       </div>
 
       {/* Filters Toolbar */}
-      <div className="bg-surface p-4 rounded-xl border border-border flex flex-col md:flex-row gap-4 justify-between">
-        <div className="relative flex-1 max-w-md">
+      <div className="bg-surface p-3 md:p-4 rounded-xl border border-border flex flex-col gap-3 md:gap-4">
+        {/* Search Row */}
+        <div className="relative w-full">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
           <input
             type="text"
@@ -93,10 +94,13 @@ const TradingLog: React.FC = () => {
           />
         </div>
         
-        {/* Daily Targets */}
-        <DailyTargets />
+        {/* Daily Targets Row - Mobile optimized */}
+        <div className="w-full overflow-x-auto -mx-1 px-1">
+          <DailyTargets />
+        </div>
         
-        <div className="flex items-center gap-3">
+        {/* Filters Row */}
+        <div className="flex items-center gap-3 justify-between md:justify-end">
           <div className="flex items-center gap-2 px-3 py-2 bg-background border border-border rounded-lg">
             <Filter className="w-4 h-4 text-gray-400" />
             <select 

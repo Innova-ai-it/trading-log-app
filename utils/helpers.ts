@@ -130,7 +130,11 @@ export const calculateBankrollHistory = (
 };
 
 // Helper: Recalculate all derived fields (Points, Daily, TP/SL)
-export const recalculateTrades = (trades: Trade[], settings: Settings): Trade[] => {
+export const recalculateTrades = (
+  trades: Trade[], 
+  settings: Settings,
+  adjustments: BankrollAdjustment[] = []
+): Trade[] => {
   if (!trades.length) return [];
 
   // 1. Sort Chronologically to calculate running totals
@@ -149,7 +153,14 @@ export const recalculateTrades = (trades: Trade[], settings: Settings): Trade[] 
   // 2. Pre-calculate Start-of-Day Bankroll for every date
   // This simulates the "Compound Interest" logic where today's target is % of today's starting bankroll
   const startOfDayBankrolls = new Map<string, number>();
+  
+  // Start with initial bankroll
   let currentRunningBankroll = settings.initialBank || 1000;
+  
+  // Sort adjustments chronologically
+  const sortedAdjustments = [...adjustments].sort((a, b) => 
+    new Date(a.date).getTime() - new Date(b.date).getTime()
+  );
   
   // Group trades by date to process them sequentially day by day
   const tradesByDate = new Map<string, Trade[]>();
@@ -159,8 +170,38 @@ export const recalculateTrades = (trades: Trade[], settings: Settings): Trade[] 
   });
 
   const sortedUniqueDates = Array.from(tradesByDate.keys()).sort();
+  const firstTradeDate = sortedUniqueDates.length > 0 ? sortedUniqueDates[0] : null;
+
+  // Apply adjustments that happened before the first trade
+  if (firstTradeDate) {
+    const firstTradeDateTime = new Date(firstTradeDate).getTime();
+    sortedAdjustments.forEach(adj => {
+      const adjDate = new Date(adj.date).getTime();
+      if (adjDate < firstTradeDateTime) {
+        if (adj.type === AdjustmentType.DEPOSIT) {
+          currentRunningBankroll += adj.amount;
+        } else if (adj.type === AdjustmentType.WITHDRAWAL) {
+          currentRunningBankroll -= adj.amount;
+        }
+      }
+    });
+  }
 
   sortedUniqueDates.forEach(date => {
+      // Apply adjustments that happened on this date (before trades)
+      const dateTime = new Date(date).getTime();
+      sortedAdjustments.forEach(adj => {
+        const adjDate = new Date(adj.date).getTime();
+        // Apply adjustment if it's on the same date (before trades are processed)
+        if (adjDate === dateTime) {
+          if (adj.type === AdjustmentType.DEPOSIT) {
+            currentRunningBankroll += adj.amount;
+          } else if (adj.type === AdjustmentType.WITHDRAWAL) {
+            currentRunningBankroll -= adj.amount;
+          }
+        }
+      });
+      
       // The bankroll at the start of this date is whatever the running bankroll is right now
       startOfDayBankrolls.set(date, currentRunningBankroll);
 

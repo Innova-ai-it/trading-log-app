@@ -75,7 +75,7 @@ export const useSupabaseStore = create<SupabaseStoreState>((set, get) => ({
 
       if (data) {
         const trades = data.map(mapSupabaseToTrade);
-        const recalculated = recalculateTrades(trades, get().settings);
+        const recalculated = recalculateTrades(trades, get().settings, get().adjustments);
         set({ trades: recalculated });
       }
     } catch (error) {
@@ -124,6 +124,7 @@ export const useSupabaseStore = create<SupabaseStoreState>((set, get) => ({
 
       if (data) {
         set({ adjustments: data.map(mapSupabaseToAdjustment) });
+        // NON ricalcolare i trades - solo i target giornalieri si aggiornano dinamicamente
       }
     } catch (error) {
       console.error('Error fetching adjustments:', error);
@@ -279,6 +280,7 @@ export const useSupabaseStore = create<SupabaseStoreState>((set, get) => ({
       if (error) throw error;
 
       await get().fetchAdjustments();
+      // NON ricalcolare i trades - solo i target giornalieri si aggiornano dinamicamente
     } catch (error) {
       console.error('Error adding adjustment:', error);
       throw error;
@@ -295,6 +297,7 @@ export const useSupabaseStore = create<SupabaseStoreState>((set, get) => ({
       if (error) throw error;
 
       await get().fetchAdjustments();
+      // NON ricalcolare i trades - solo i target giornalieri si aggiornano dinamicamente
     } catch (error) {
       console.error('Error deleting adjustment:', error);
       throw error;
