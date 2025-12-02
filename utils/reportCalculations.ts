@@ -17,9 +17,9 @@ export const filterTradesByMonth = (trades: Trade[], year: number, month: number
   });
 };
 
-// Helper: Get day of week name in Italian
+// Helper: Get day of week name in English
 const getDayOfWeek = (date: string): string => {
-  const days = ['Domenica', 'Lunedì', 'Martedì', 'Mercoledì', 'Giovedì', 'Venerdì', 'Sabato'];
+  const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   return days[new Date(date).getDay()];
 };
 
@@ -48,23 +48,25 @@ export interface PerformanceOverview {
 }
 
 export const calculatePerformanceOverview = (
-  trades: Trade[],
+  allTrades: Trade[],
   initialBankroll: number,
   adjustments: BankrollAdjustment[],
   monthStart: Date,
   monthEnd: Date
 ): PerformanceOverview => {
-  const closedTrades = trades.filter(t => t.result !== TradeResult.OPEN && t.result !== TradeResult.VOID);
+  // Filter trades for the selected month
+  const monthTrades = allTrades.filter(trade => {
+    const tradeDate = new Date(trade.date);
+    return tradeDate >= monthStart && tradeDate <= monthEnd;
+  });
+  
+  const closedTrades = monthTrades.filter(t => t.result !== TradeResult.OPEN && t.result !== TradeResult.VOID);
   const totalTrades = closedTrades.length;
   
-  // Calculate starting bankroll (bankroll at start of month)
-  const adjustmentsBeforeMonth = adjustments.filter(adj => new Date(adj.date) < monthStart);
-  const tradesBeforeMonth = trades.filter(t => new Date(t.date) < monthStart);
-  const profitBeforeMonth = tradesBeforeMonth.reduce((sum, t) => sum + (t.profitLoss || 0), 0);
-  const startingBankroll = calculateTotalCapitalInvested(initialBankroll, adjustmentsBeforeMonth) + profitBeforeMonth;
-  
-  // Calculate ending bankroll
+  // Calculate net profit for the month
   const netProfit = closedTrades.reduce((sum, t) => sum + (t.profitLoss || 0), 0);
+  
+  // Calculate adjustments during the month
   const adjustmentsInMonth = adjustments.filter(adj => {
     const adjDate = new Date(adj.date);
     return adjDate >= monthStart && adjDate <= monthEnd;
@@ -72,6 +74,30 @@ export const calculatePerformanceOverview = (
   const adjustmentsSum = adjustmentsInMonth.reduce((sum, adj) => {
     return sum + (adj.type === AdjustmentType.DEPOSIT ? adj.amount : -adj.amount);
   }, 0);
+  // Calculate total deposits during the month (for ROI calculation)
+  const depositsInMonth = adjustmentsInMonth
+    .filter(adj => adj.type === AdjustmentType.DEPOSIT)
+    .reduce((sum, adj) => sum + adj.amount, 0);
+  
+  // Calculate bankroll at the END of the selected month (not current total bankroll)
+  // This ensures past months show correct values, not affected by future months
+  const adjustmentsUpToMonthEnd = adjustments.filter(adj => {
+    const adjDate = new Date(adj.date);
+    return adjDate <= monthEnd;
+  });
+  const tradesUpToMonthEnd = allTrades.filter(t => {
+    const tradeDate = new Date(t.date);
+    return tradeDate <= monthEnd && t.result !== TradeResult.OPEN && t.result !== TradeResult.VOID;
+  });
+  
+  const capitalInvestedUpToMonthEnd = calculateTotalCapitalInvested(initialBankroll, adjustmentsUpToMonthEnd);
+  const profitUpToMonthEnd = tradesUpToMonthEnd.reduce((sum, t) => sum + (t.profitLoss || 0), 0);
+  const bankrollAtMonthEnd = capitalInvestedUpToMonthEnd + profitUpToMonthEnd;
+  
+  // Starting bankroll = Bankroll at end of month - Net profit of the month - Adjustments of the month
+  const startingBankroll = bankrollAtMonthEnd - netProfit - adjustmentsSum;
+  
+  // Ending bankroll = Starting bankroll + Net profit + Adjustments
   const endingBankroll = startingBankroll + netProfit + adjustmentsSum;
   
   // Total staked
@@ -92,8 +118,10 @@ export const calculatePerformanceOverview = (
   const avgLoss = losses > 0 ? totalLossAmount / losses : 0;
   const expectancy = (winRate / 100) * avgWin - ((100 - winRate) / 100) * avgLoss;
   
-  // ROI
-  const roi = totalStaked > 0 ? (netProfit / totalStaked) * 100 : 0;
+  // ROI - calculated on total capital invested during the month (starting bankroll + deposits)
+  // This gives a more accurate ROI that accounts for capital additions during the month
+  const totalCapitalInvestedInMonth = startingBankroll + depositsInMonth;
+  const roi = totalCapitalInvestedInMonth > 0 ? (netProfit / totalCapitalInvestedInMonth) * 100 : 0;
   
   // Avg Profit per Trade
   const avgProfitPerTrade = totalTrades > 0 ? netProfit / totalTrades : 0;
@@ -132,21 +160,62 @@ export const calculateRiskMetrics = (
 ): RiskMetrics => {
   const closedTrades = trades
     .filter(t => t.result !== TradeResult.OPEN && t.result !== TradeResult.VOID)
-    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    .sort((a, b) => {
+      const dateA = new Date(a.date).getTime();
+      const dateB = new Date(b.date).getTime();
+      if (dateA !== dateB) return dateA - dateB;
+      // If same date, sort by createdAt if available
+      if (a.createdAt && b.createdAt) {
+        return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+      }
+      return 0;
+    });
   
   // Calculate bankroll evolution for drawdown
   const adjustmentsBeforeMonth = adjustments.filter(adj => new Date(adj.date) < monthStart);
-  const tradesBeforeMonth = trades.filter(t => new Date(t.date) < monthStart);
-  const profitBeforeMonth = tradesBeforeMonth.reduce((sum, t) => sum + (t.profitLoss || 0), 0);
+  const closedTradesBeforeMonth = trades.filter(t => 
+    new Date(t.date) < monthStart && 
+    t.result !== TradeResult.OPEN && 
+    t.result !== TradeResult.VOID
+  );
+  const profitBeforeMonth = closedTradesBeforeMonth.reduce((sum, t) => sum + (t.profitLoss || 0), 0);
   let currentBankroll = calculateTotalCapitalInvested(initialBankroll, adjustmentsBeforeMonth) + profitBeforeMonth;
+  
+  // Get month range to filter adjustments during the month
+  const monthEnd = new Date(monthStart.getFullYear(), monthStart.getMonth() + 1, 0, 23, 59, 59);
+  
+  // Combine trades and adjustments, sort by date
+  const allEvents: Array<{ date: Date; type: 'trade' | 'adjustment'; trade?: Trade; adjustment?: BankrollAdjustment }> = [];
+  
+  closedTrades.forEach(trade => {
+    allEvents.push({ date: new Date(trade.date), type: 'trade', trade });
+  });
+  
+  adjustments.filter(adj => {
+    const adjDate = new Date(adj.date);
+    return adjDate >= monthStart && adjDate <= monthEnd;
+  }).forEach(adj => {
+    allEvents.push({ date: new Date(adj.date), type: 'adjustment', adjustment: adj });
+  });
+  
+  allEvents.sort((a, b) => a.date.getTime() - b.date.getTime());
   
   let peakBankroll = currentBankroll;
   let maxDrawdown = 0;
   let maxDrawdownPercent = 0;
   
-  // Calculate drawdown iterating through trades
-  closedTrades.forEach(trade => {
-    currentBankroll += trade.profitLoss;
+  // Calculate drawdown iterating through all events (trades and adjustments)
+  allEvents.forEach(event => {
+    if (event.type === 'trade' && event.trade) {
+      currentBankroll += event.trade.profitLoss;
+    } else if (event.type === 'adjustment' && event.adjustment) {
+      if (event.adjustment.type === AdjustmentType.DEPOSIT) {
+        currentBankroll += event.adjustment.amount;
+      } else {
+        currentBankroll -= event.adjustment.amount;
+      }
+    }
+    
     if (currentBankroll > peakBankroll) {
       peakBankroll = currentBankroll;
     }
@@ -159,25 +228,25 @@ export const calculateRiskMetrics = (
   });
   
   // Consecutive streaks
-  let currentStreak = 0;
+  let currentWinStreak = 0;
+  let currentLossStreak = 0;
   let maxWinStreak = 0;
   let maxLossStreak = 0;
-  let lastResult: TradeResult | null = null;
   
   closedTrades.forEach(trade => {
-    if (lastResult === null || trade.result === lastResult) {
-      currentStreak++;
-    } else {
-      currentStreak = 1;
-    }
-    
     if (trade.result === TradeResult.WIN) {
-      maxWinStreak = Math.max(maxWinStreak, currentStreak);
+      currentWinStreak++;
+      currentLossStreak = 0; // Reset loss streak
+      maxWinStreak = Math.max(maxWinStreak, currentWinStreak);
     } else if (trade.result === TradeResult.LOSE) {
-      maxLossStreak = Math.max(maxLossStreak, currentStreak);
+      currentLossStreak++;
+      currentWinStreak = 0; // Reset win streak
+      maxLossStreak = Math.max(maxLossStreak, currentLossStreak);
+    } else {
+      // For VOID trades, reset both streaks
+      currentWinStreak = 0;
+      currentLossStreak = 0;
     }
-    
-    lastResult = trade.result;
   });
   
   // Avg Risk per Trade
@@ -455,7 +524,7 @@ export const calculateDayOfWeekPerformance = (trades: Trade[]): DayOfWeekPerform
     dayMap.set(day, current);
   });
   
-  const daysOrder = ['Lunedì', 'Martedì', 'Mercoledì', 'Giovedì', 'Venerdì', 'Sabato', 'Domenica'];
+  const daysOrder = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
   
   return daysOrder
     .map(day => {
@@ -602,54 +671,54 @@ export const generateInsights = (
   
   // Strengths
   if (performance.winRate >= 60) {
-    strengths.push(`Eccellente win rate del ${performance.winRate.toFixed(1)}%`);
+    strengths.push(`Excellent win rate of ${performance.winRate.toFixed(1)}%`);
   } else if (performance.winRate >= 55) {
-    strengths.push(`Buon win rate del ${performance.winRate.toFixed(1)}%`);
+    strengths.push(`Good win rate of ${performance.winRate.toFixed(1)}%`);
   }
   
   if (performance.profitFactor >= 2.0) {
-    strengths.push(`Profit Factor molto alto: ${performance.profitFactor.toFixed(2)}`);
+    strengths.push(`Very high Profit Factor: ${performance.profitFactor.toFixed(2)}`);
   } else if (performance.profitFactor >= 1.5) {
-    strengths.push(`Profit Factor positivo: ${performance.profitFactor.toFixed(2)}`);
+    strengths.push(`Positive Profit Factor: ${performance.profitFactor.toFixed(2)}`);
   }
   
   if (riskMetrics.maxDrawdownPercent < 10) {
-    strengths.push(`Drawdown contenuto: ${riskMetrics.maxDrawdownPercent.toFixed(1)}%`);
+    strengths.push(`Contained drawdown: ${riskMetrics.maxDrawdownPercent.toFixed(1)}%`);
   }
   
   const topStrategies = strategyPerf.filter(s => s.profit > 0).slice(0, 3);
   if (topStrategies.length > 0) {
-    strengths.push(`Strategie vincenti: ${topStrategies.map(s => s.strategy).join(', ')}`);
+    strengths.push(`Winning strategies: ${topStrategies.map(s => s.strategy).join(', ')}`);
   }
   
   if (performance.expectancy > 0) {
-    strengths.push(`Expectancy positiva: €${performance.expectancy.toFixed(2)} per trade`);
+    strengths.push(`Positive expectancy: €${performance.expectancy.toFixed(2)} per trade`);
   }
   
   // Improvements
   if (performance.winRate < 50) {
-    improvements.push(`Win rate basso (${performance.winRate.toFixed(1)}%). Valuta di rivedere le strategie.`);
+    improvements.push(`Low win rate (${performance.winRate.toFixed(1)}%). Consider reviewing your strategies.`);
   }
   
   if (performance.profitFactor < 1.0) {
-    improvements.push(`Profit Factor negativo (${performance.profitFactor.toFixed(2)}). Le perdite superano i guadagni.`);
+    improvements.push(`Negative Profit Factor (${performance.profitFactor.toFixed(2)}). Losses exceed gains.`);
   }
   
   if (riskMetrics.maxDrawdownPercent > 20) {
-    improvements.push(`Drawdown elevato: ${riskMetrics.maxDrawdownPercent.toFixed(1)}%. Considera di ridurre lo stake.`);
+    improvements.push(`High drawdown: ${riskMetrics.maxDrawdownPercent.toFixed(1)}%. Consider reducing stake size.`);
   }
   
   const losingStrategies = strategyPerf.filter(s => s.profit < 0);
   if (losingStrategies.length > 0) {
-    improvements.push(`Strategie in perdita: ${losingStrategies.map(s => s.strategy).join(', ')}`);
+    improvements.push(`Losing strategies: ${losingStrategies.map(s => s.strategy).join(', ')}`);
   }
   
   if (riskMetrics.maxConsecutiveLosses >= 5) {
-    improvements.push(`Serie di perdite consecutive elevate: ${riskMetrics.maxConsecutiveLosses}. Valuta una pausa.`);
+    improvements.push(`High consecutive losses: ${riskMetrics.maxConsecutiveLosses}. Consider taking a break.`);
   }
   
   if (performance.expectancy < 0) {
-    improvements.push(`Expectancy negativa: €${performance.expectancy.toFixed(2)} per trade. Rivedi l'approccio.`);
+    improvements.push(`Negative expectancy: €${performance.expectancy.toFixed(2)} per trade. Review your approach.`);
   }
   
   return { strengths, improvements };

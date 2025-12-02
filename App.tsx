@@ -49,7 +49,7 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
         <nav className="flex-1 p-4 space-y-2">
           <NavLink to="/dashboard" icon={<LayoutDashboard className="w-5 h-5" />} label="Dashboard" />
           <NavLink to="/trading-log" icon={<List className="w-5 h-5" />} label="Trading Log" />
-          <NavLink to="/monthly-report" icon={<FileText className="w-5 h-5" />} label="Report Mensile" />
+          <NavLink to="/monthly-report" icon={<FileText className="w-5 h-5" />} label="Monthly Report" />
         </nav>
 
         <div className="p-4 border-t border-border space-y-2">
@@ -119,7 +119,7 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
               <NavLink to="/trading-log" icon={<List className="w-5 h-5" />} label="Trading Log" />
             </div>
             <div onClick={() => setMobileMenuOpen(false)}>
-              <NavLink to="/monthly-report" icon={<FileText className="w-5 h-5" />} label="Report Mensile" />
+              <NavLink to="/monthly-report" icon={<FileText className="w-5 h-5" />} label="Monthly Report" />
             </div>
             
             {/* Mobile Logout */}

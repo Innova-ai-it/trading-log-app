@@ -51,13 +51,13 @@ const MonthlyReport: React.FC = () => {
   // Calculate all metrics
   const performance = useMemo(() =>
     calculatePerformanceOverview(
-      monthTrades,
+      trades,  // Pass all trades, not just monthTrades, so we can calculate currentBankroll correctly
       settings.initialBank,
       adjustments,
       monthRange.start,
       monthRange.end
     ),
-    [monthTrades, settings.initialBank, adjustments, monthRange]
+    [trades, settings.initialBank, adjustments, monthRange]
   );
 
   const riskMetrics = useMemo(() =>
@@ -117,10 +117,10 @@ const MonthlyReport: React.FC = () => {
     [performance, riskMetrics, strategyPerformance, competitionPerformance]
   );
 
-  // Month names in Italian
+  // Month names in English
   const monthNames = [
-    'Gennaio', 'Febbraio', 'Marzo', 'Aprile', 'Maggio', 'Giugno',
-    'Luglio', 'Agosto', 'Settembre', 'Ottobre', 'Novembre', 'Dicembre'
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December'
   ];
 
   const monthName = monthNames[selectedMonth - 1];
@@ -134,8 +134,8 @@ const MonthlyReport: React.FC = () => {
       {/* Header */}
       <div className="flex flex-col md:flex-row gap-4 justify-between items-start md:items-center">
         <div>
-          <h1 className="text-2xl font-bold text-white">Report Mensile</h1>
-          <p className="text-gray-400">Analisi dettagliata delle performance</p>
+          <h1 className="text-2xl font-bold text-white">Monthly Report</h1>
+          <p className="text-gray-400">Detailed performance analysis</p>
         </div>
         <div className="flex gap-3">
           <select
@@ -338,7 +338,7 @@ const MonthlyReport: React.FC = () => {
             </table>
           </div>
         ) : (
-          <p className="text-gray-500 text-center py-8">Nessun trade disponibile per questo mese</p>
+          <p className="text-gray-500 text-center py-8">No trades available for this month</p>
         )}
       </div>
 
@@ -394,7 +394,7 @@ const MonthlyReport: React.FC = () => {
             </div>
           </div>
         ) : (
-          <p className="text-gray-500 text-center py-8">Nessun trade disponibile per questo mese</p>
+          <p className="text-gray-500 text-center py-8">No trades available for this month</p>
         )}
       </div>
 
@@ -433,7 +433,7 @@ const MonthlyReport: React.FC = () => {
             </table>
           </div>
         ) : (
-          <p className="text-gray-500 text-center py-8">Nessun trade disponibile per questo mese</p>
+          <p className="text-gray-500 text-center py-8">No trades available for this month</p>
         )}
       </div>
 
@@ -446,7 +446,7 @@ const MonthlyReport: React.FC = () => {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Day of Week */}
           <div>
-            <h3 className="text-lg font-medium text-white mb-4">Performance per Giorno della Settimana</h3>
+            <h3 className="text-lg font-medium text-white mb-4">Performance by Day of Week</h3>
             {dayOfWeekPerformance.length > 0 ? (
               <div className="h-[300px]">
                 <ResponsiveContainer width="100%" height="100%">
@@ -466,12 +466,12 @@ const MonthlyReport: React.FC = () => {
                 </ResponsiveContainer>
               </div>
             ) : (
-              <p className="text-gray-500 text-center py-8">Nessun dato disponibile</p>
+              <p className="text-gray-500 text-center py-8">No data available</p>
             )}
           </div>
           {/* Hour Range */}
           <div>
-            <h3 className="text-lg font-medium text-white mb-4">Performance per Fascia Oraria</h3>
+            <h3 className="text-lg font-medium text-white mb-4">Performance by Time Range</h3>
             {hourRangePerformance.length > 0 ? (
               <div className="h-[300px]">
                 <ResponsiveContainer width="100%" height="100%">
@@ -491,7 +491,7 @@ const MonthlyReport: React.FC = () => {
                 </ResponsiveContainer>
               </div>
             ) : (
-              <p className="text-gray-500 text-center py-8">Nessun dato disponibile</p>
+              <p className="text-gray-500 text-center py-8">No data available</p>
             )}
           </div>
         </div>
@@ -508,7 +508,7 @@ const MonthlyReport: React.FC = () => {
           <div className="bg-green-900/10 border border-green-500/20 rounded-lg p-4">
             <h3 className="text-lg font-medium text-success mb-4 flex items-center gap-2">
               <CheckCircle className="w-5 h-5" />
-              Punti di Forza
+              Strengths
             </h3>
             {insights.strengths.length > 0 ? (
               <ul className="space-y-2">
@@ -520,14 +520,14 @@ const MonthlyReport: React.FC = () => {
                 ))}
               </ul>
             ) : (
-              <p className="text-gray-500">Nessun punto di forza identificato</p>
+              <p className="text-gray-500">No strengths identified</p>
             )}
           </div>
           {/* Improvements */}
           <div className="bg-yellow-900/10 border border-yellow-500/20 rounded-lg p-4">
             <h3 className="text-lg font-medium text-yellow-500 mb-4 flex items-center gap-2">
               <AlertTriangle className="w-5 h-5" />
-              Aree di Miglioramento
+              Areas for Improvement
             </h3>
             {insights.improvements.length > 0 ? (
               <ul className="space-y-2">
@@ -539,7 +539,7 @@ const MonthlyReport: React.FC = () => {
                 ))}
               </ul>
             ) : (
-              <p className="text-gray-500">Nessuna area di miglioramento identificata</p>
+              <p className="text-gray-500">No areas for improvement identified</p>
             )}
           </div>
         </div>
@@ -547,12 +547,12 @@ const MonthlyReport: React.FC = () => {
         <div className="mt-6 bg-background/50 border border-border rounded-lg p-4">
           <h3 className="text-lg font-medium text-white mb-4 flex items-center gap-2">
             <Target className="w-5 h-5 text-blue-500" />
-            Obiettivi Prossimo Mese
+            Next Month Goals
           </h3>
           <textarea
             value={nextMonthGoals}
             onChange={(e) => setNextMonthGoals(e.target.value)}
-            placeholder="Scrivi qui i tuoi obiettivi per il prossimo mese..."
+            placeholder="Write your goals for next month here..."
             className="w-full bg-background border border-border rounded-lg p-3 text-white placeholder-gray-500 min-h-[100px] focus:outline-none focus:border-primary"
           />
         </div>
@@ -562,7 +562,7 @@ const MonthlyReport: React.FC = () => {
       <div className="bg-surface p-6 rounded-xl border border-border">
         <h2 className="text-xl font-semibold text-white mb-6 flex items-center gap-2">
           <TrendingUp className="w-5 h-5 text-blue-500" />
-          Confronto con Mese Precedente
+          Comparison with Previous Month
         </h2>
         {monthlyComparison.length > 0 ? (
           <div className="overflow-x-auto">
@@ -570,9 +570,9 @@ const MonthlyReport: React.FC = () => {
               <thead>
                 <tr className="border-b border-border">
                   <th className="text-left py-3 px-4 text-gray-400 font-medium">KPI</th>
-                  <th className="text-right py-3 px-4 text-gray-400 font-medium">Mese Corrente</th>
-                  <th className="text-right py-3 px-4 text-gray-400 font-medium">Mese Precedente</th>
-                  <th className="text-right py-3 px-4 text-gray-400 font-medium">Variazione</th>
+                  <th className="text-right py-3 px-4 text-gray-400 font-medium">Current Month</th>
+                  <th className="text-right py-3 px-4 text-gray-400 font-medium">Previous Month</th>
+                  <th className="text-right py-3 px-4 text-gray-400 font-medium">Change</th>
                 </tr>
               </thead>
               <tbody>
@@ -600,7 +600,7 @@ const MonthlyReport: React.FC = () => {
             </table>
           </div>
         ) : (
-          <p className="text-gray-500 text-center py-8">Nessun dato disponibile per il confronto</p>
+          <p className="text-gray-500 text-center py-8">No data available for comparison</p>
         )}
       </div>
     </div>
