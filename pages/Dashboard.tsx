@@ -4,10 +4,12 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   BarChart, Bar, PieChart, Pie, Cell, Legend
 } from 'recharts';
-import { TrendingUp, TrendingDown, DollarSign, Activity, Award, Target, Ban, Calendar, PlusCircle, Trophy, Zap } from 'lucide-react';
+import { TrendingUp, TrendingDown, DollarSign, Activity, Award, Target, Ban, Calendar, PlusCircle, Trophy, Zap, BarChart3, AlertTriangle, Info } from 'lucide-react';
 import { calculateBankrollHistory, calculateTotalCapitalInvested, formatCurrency } from '../utils/helpers';
 import { TradeResult, AdjustmentType } from '../types';
 import { AdjustmentModal } from '../components/AdjustmentModal';
+import { calculateCurrentStreak } from '../utils/reportCalculations';
+import { StrategyDashboard } from '../components/StrategyDashboard';
 
 const Dashboard: React.FC = () => {
   const { trades, settings, adjustments } = useSupabaseStore();
@@ -17,6 +19,10 @@ const Dashboard: React.FC = () => {
     [initialBankroll, adjustments]
   );
   const [isAdjustmentModalOpen, setAdjustmentModalOpen] = useState(false);
+  const [showStrategyDashboard, setShowStrategyDashboard] = useState(false);
+
+  // Current Streak
+  const currentStreak = useMemo(() => calculateCurrentStreak(trades), [trades]);
 
   const metrics = useMemo(() => {
     const totalTrades = trades.length;
@@ -157,6 +163,10 @@ const Dashboard: React.FC = () => {
     { name: 'Void', value: metrics.voids, color: '#06b6d4' },
   ].filter(d => d.value > 0);
 
+  if (showStrategyDashboard) {
+    return <StrategyDashboard onBack={() => setShowStrategyDashboard(false)} />;
+  }
+
   return (
     <div className="space-y-6 pb-20">
       <div className="flex flex-col md:flex-row gap-4 justify-between items-start md:items-center">
@@ -164,13 +174,22 @@ const Dashboard: React.FC = () => {
           <h1 className="text-2xl font-bold text-white">Dashboard</h1>
           <p className="text-gray-400">Overview of your trading performance</p>
         </div>
-        <button 
-          onClick={() => setAdjustmentModalOpen(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded-lg text-white text-sm font-medium transition-colors shadow-lg shadow-purple-500/20"
-        >
-          <PlusCircle className="w-4 h-4" />
-          Deposit/Withdrawal
-        </button>
+        <div className="flex gap-2">
+          <button 
+            onClick={() => setShowStrategyDashboard(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg text-white text-sm font-medium transition-colors shadow-lg shadow-blue-500/20"
+          >
+            <BarChart3 className="w-4 h-4" />
+            Strategy Analysis
+          </button>
+          <button 
+            onClick={() => setAdjustmentModalOpen(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded-lg text-white text-sm font-medium transition-colors shadow-lg shadow-purple-500/20"
+          >
+            <PlusCircle className="w-4 h-4" />
+            Deposit/Withdrawal
+          </button>
+        </div>
       </div>
 
       {/* KPI Cards */}
@@ -240,6 +259,90 @@ const Dashboard: React.FC = () => {
            <div className="mt-4 text-sm text-gray-400">
              Avg Odds: {(trades.reduce((a, b) => a + b.odds, 0) / (trades.length || 1)).toFixed(2)}
            </div>
+        </div>
+      </div>
+
+      {/* Current Streak Card */}
+      <div className="bg-surface p-6 rounded-xl border border-border">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-semibold text-white flex items-center gap-2">
+            <Zap className="w-5 h-5 text-yellow-500" />
+            Current Streak
+          </h3>
+          {currentStreak.alert && (
+            <div className={`flex items-center gap-2 px-3 py-1 rounded-lg text-sm ${
+              currentStreak.alert === 'OVER_CONFIDENCE' ? 'bg-yellow-500/20 text-yellow-400' :
+              currentStreak.alert === 'REVENGE_TRADING' ? 'bg-red-500/20 text-red-400' :
+              'bg-orange-500/20 text-orange-400'
+            }`}>
+              {currentStreak.alert === 'OVER_CONFIDENCE' && <AlertTriangle className="w-4 h-4" />}
+              {currentStreak.alert === 'REVENGE_TRADING' && <AlertTriangle className="w-4 h-4" />}
+              {currentStreak.alert === 'TILT' && <Info className="w-4 h-4" />}
+              <span>
+                {currentStreak.alert === 'OVER_CONFIDENCE' && 'Attenzione: Over-confidence'}
+                {currentStreak.alert === 'REVENGE_TRADING' && 'Pausa consigliata'}
+                {currentStreak.alert === 'TILT' && 'Possibile tilt, rallenta'}
+              </span>
+            </div>
+          )}
+        </div>
+        
+        <div className="flex items-center gap-6">
+          <div className="flex items-center gap-3">
+            {currentStreak.type === 'WIN' && (
+              <div className="flex items-center gap-2">
+                <div className="w-12 h-12 rounded-full bg-green-500/20 flex items-center justify-center">
+                  <Trophy className="w-6 h-6 text-green-400" />
+                </div>
+                <div>
+                  <p className="text-2xl font-bold text-success">{currentStreak.count}</p>
+                  <p className="text-xs text-gray-400">Wins Consecutive</p>
+                </div>
+              </div>
+            )}
+            {currentStreak.type === 'LOSE' && (
+              <div className="flex items-center gap-2">
+                <div className="w-12 h-12 rounded-full bg-red-500/20 flex items-center justify-center">
+                  <Ban className="w-6 h-6 text-red-400" />
+                </div>
+                <div>
+                  <p className="text-2xl font-bold text-danger">{currentStreak.count}</p>
+                  <p className="text-xs text-gray-400">Losses Consecutive</p>
+                </div>
+              </div>
+            )}
+            {currentStreak.type === 'NONE' && (
+              <div className="flex items-center gap-2">
+                <div className="w-12 h-12 rounded-full bg-gray-500/20 flex items-center justify-center">
+                  <Activity className="w-6 h-6 text-gray-400" />
+                </div>
+                <div>
+                  <p className="text-2xl font-bold text-gray-400">-</p>
+                  <p className="text-xs text-gray-400">No streak</p>
+                </div>
+              </div>
+            )}
+          </div>
+          
+          {currentStreak.last10Results.length > 0 && (
+            <div className="flex-1">
+              <p className="text-sm text-gray-400 mb-2">Last 10 trades:</p>
+              <div className="flex gap-1">
+                {currentStreak.last10Results.map((result, idx) => (
+                  <div
+                    key={idx}
+                    className={`w-8 h-8 rounded flex items-center justify-center text-xs font-bold ${
+                      result === 'W' ? 'bg-green-500/20 text-green-400' :
+                      result === 'L' ? 'bg-red-500/20 text-red-400' :
+                      'bg-gray-500/20 text-gray-400'
+                    }`}
+                  >
+                    {result}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 

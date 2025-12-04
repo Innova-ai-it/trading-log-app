@@ -341,6 +341,23 @@ export interface StrategyPerformance {
   winRate: number;
   profit: number;
   roi: number;
+  // Extended metrics
+  profitFactor: number;
+  expectancy: number;
+  avgWin: number;
+  avgLoss: number;
+  payoffRatio: number;
+  maxDrawdown: number;
+  maxDrawdownPercent: number;
+  yield: number;
+  normalizedYield: number;
+  avgOdds: number;
+  // Kelly Criterion
+  kellyPercent: number;
+  fractionalKelly: number;
+  avgStakePercent: number;
+  // Alerts
+  alert?: 'LOW_SAMPLE' | 'CONSECUTIVE_LOSSES' | 'SCALE_UP' | null;
 }
 
 export const calculateStrategyPerformance = (trades: Trade[]): StrategyPerformance[] => {
@@ -382,6 +399,89 @@ export const calculateStrategyPerformance = (trades: Trade[]): StrategyPerforman
         ? (data.profit / data.totalStaked) * 100 
         : 0;
       
+      // Extended metrics
+      const winningTrades = data.trades.filter(t => t.profitLoss > 0);
+      const losingTrades = data.trades.filter(t => t.profitLoss < 0);
+      
+      const totalWinAmount = winningTrades.reduce((sum, t) => sum + t.profitLoss, 0);
+      const totalLossAmount = Math.abs(losingTrades.reduce((sum, t) => sum + t.profitLoss, 0));
+      
+      const profitFactor = totalLossAmount > 0 ? totalWinAmount / totalLossAmount : totalWinAmount > 0 ? 999 : 0;
+      const avgWin = data.wins > 0 ? totalWinAmount / data.wins : 0;
+      const avgLoss = data.losses > 0 ? totalLossAmount / data.losses : 0;
+      const payoffRatio = avgLoss > 0 ? avgWin / avgLoss : avgWin > 0 ? 999 : 0;
+      
+      // Expectancy
+      const expectancy = (winRate / 100) * avgWin - ((100 - winRate) / 100) * avgLoss;
+      
+      // Max Drawdown
+      let currentBalance = 0;
+      let peakBalance = 0;
+      let maxDrawdown = 0;
+      let maxDrawdownPercent = 0;
+      
+      // Sort trades chronologically for drawdown calculation
+      const sortedTrades = [...data.trades].sort((a, b) => {
+        const dateA = new Date(a.date).getTime();
+        const dateB = new Date(b.date).getTime();
+        if (dateA !== dateB) return dateA - dateB;
+        if (a.createdAt && b.createdAt) {
+          return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+        }
+        return 0;
+      });
+      
+      sortedTrades.forEach(trade => {
+        currentBalance += trade.profitLoss;
+        if (currentBalance > peakBalance) {
+          peakBalance = currentBalance;
+        }
+        const drawdown = peakBalance - currentBalance;
+        if (drawdown > maxDrawdown) {
+          maxDrawdown = drawdown;
+          maxDrawdownPercent = peakBalance > 0 ? (drawdown / peakBalance) * 100 : 0;
+        }
+      });
+      
+      // Yield %
+      const yieldPercent = data.totalStaked > 0 ? (data.profit / data.totalStaked) * 100 : 0;
+      
+      // Average Odds
+      const avgOdds = data.trades.length > 0
+        ? data.trades.reduce((sum, t) => sum + t.odds, 0) / data.trades.length
+        : 0;
+      
+      // Normalized Yield
+      const normalizedYield = avgOdds > 0 ? yieldPercent / avgOdds : 0;
+      
+      // Kelly Criterion
+      // Win_Probability = Win_Rate / 100
+      // Edge = (Odds × Win_Probability) - 1
+      // Kelly% = Edge / (Odds - 1)
+      const winProbability = winRate / 100;
+      const edge = (avgOdds * winProbability) - 1;
+      const kellyPercent = avgOdds > 1 && edge > 0 ? (edge / (avgOdds - 1)) * 100 : 0;
+      const fractionalKelly = kellyPercent * 0.25; // Conservative (25% of full Kelly)
+      
+      // Average Stake Percent (from trades)
+      const avgStakePercent = data.trades.length > 0
+        ? data.trades.reduce((sum, t) => sum + (t.stakePercent || 0), 0) / data.trades.length
+        : 0;
+      
+      // Alerts
+      let alert: 'LOW_SAMPLE' | 'CONSECUTIVE_LOSSES' | 'SCALE_UP' | null = null;
+      
+      // Check consecutive losses (last 5 trades)
+      const last5Trades = sortedTrades.slice(-5);
+      const last5AllLosses = last5Trades.length === 5 && last5Trades.every(t => t.result === TradeResult.LOSE);
+      if (last5AllLosses) {
+        alert = 'CONSECUTIVE_LOSSES';
+      } else if (data.trades.length < 30) {
+        alert = 'LOW_SAMPLE';
+      } else if (roi > 30 && data.trades.length > 50) {
+        alert = 'SCALE_UP';
+      }
+      
       return {
         strategy,
         trades: data.trades.length,
@@ -389,7 +489,21 @@ export const calculateStrategyPerformance = (trades: Trade[]): StrategyPerforman
         losses: data.losses,
         winRate,
         profit: data.profit,
-        roi
+        roi,
+        profitFactor,
+        expectancy,
+        avgWin,
+        avgLoss,
+        payoffRatio,
+        maxDrawdown,
+        maxDrawdownPercent,
+        yield: yieldPercent,
+        normalizedYield,
+        avgOdds,
+        kellyPercent,
+        fractionalKelly,
+        avgStakePercent,
+        alert
       };
     })
     .sort((a, b) => b.profit - a.profit);
@@ -722,5 +836,95 @@ export const generateInsights = (
   }
   
   return { strengths, improvements };
+};
+
+// ==================== CURRENT STREAK ====================
+
+export interface CurrentStreak {
+  type: 'WIN' | 'LOSE' | 'NONE';
+  count: number;
+  last10Results: Array<'W' | 'L' | 'V'>;
+  alert?: 'OVER_CONFIDENCE' | 'REVENGE_TRADING' | 'TILT' | null;
+}
+
+export const calculateCurrentStreak = (trades: Trade[]): CurrentStreak => {
+  const closedTrades = trades
+    .filter(t => t.result !== TradeResult.OPEN)
+    .sort((a, b) => {
+      const dateA = new Date(a.date).getTime();
+      const dateB = new Date(b.date).getTime();
+      if (dateA !== dateB) return dateB - dateA; // Newest first
+      if (a.createdAt && b.createdAt) {
+        return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+      }
+      return 0;
+    });
+
+  if (closedTrades.length === 0) {
+    return {
+      type: 'NONE',
+      count: 0,
+      last10Results: [],
+      alert: null
+    };
+  }
+
+  // Get last 10 results
+  const last10Results: Array<'W' | 'L' | 'V'> = closedTrades
+    .slice(0, 10)
+    .map(t => {
+      if (t.result === TradeResult.WIN) return 'W';
+      if (t.result === TradeResult.LOSE) return 'L';
+      return 'V';
+    });
+
+  // Calculate current streak (from most recent)
+  let currentStreakType: 'WIN' | 'LOSE' | 'NONE' = 'NONE';
+  let currentStreakCount = 0;
+
+  for (const trade of closedTrades) {
+    if (trade.result === TradeResult.VOID) continue; // Skip voids for streak
+    
+    if (currentStreakType === 'NONE') {
+      currentStreakType = trade.result === TradeResult.WIN ? 'WIN' : 'LOSE';
+      currentStreakCount = 1;
+    } else if (
+      (currentStreakType === 'WIN' && trade.result === TradeResult.WIN) ||
+      (currentStreakType === 'LOSE' && trade.result === TradeResult.LOSE)
+    ) {
+      currentStreakCount++;
+    } else {
+      break; // Streak broken
+    }
+  }
+
+  // Alerts
+  let alert: 'OVER_CONFIDENCE' | 'REVENGE_TRADING' | 'TILT' | null = null;
+  
+  if (currentStreakType === 'WIN' && currentStreakCount > 3) {
+    alert = 'OVER_CONFIDENCE';
+  } else if (currentStreakType === 'LOSE' && currentStreakCount > 3) {
+    alert = 'REVENGE_TRADING';
+  }
+  
+  // Check for tilt (more than 5 trades in last 2 hours)
+  const now = new Date();
+  const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000);
+  const recentTrades = closedTrades.filter(t => {
+    if (!t.createdAt) return false;
+    const tradeTime = new Date(t.createdAt);
+    return tradeTime >= twoHoursAgo;
+  });
+  
+  if (recentTrades.length > 5) {
+    alert = 'TILT';
+  }
+
+  return {
+    type: currentStreakType,
+    count: currentStreakCount,
+    last10Results,
+    alert
+  };
 };
 
