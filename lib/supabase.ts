@@ -51,6 +51,7 @@ export interface Database {
           weekly_sl: number;
           monthly_tp: number;
           monthly_sl: number;
+          monthly_target: number | null;
           created_at: string;
           updated_at: string;
         };
@@ -69,6 +70,22 @@ export interface Database {
         };
         Insert: Omit<Database['public']['Tables']['adjustments']['Row'], 'created_at'>;
         Update: Partial<Database['public']['Tables']['adjustments']['Insert']>;
+      };
+      user_strategies: {
+        Row: {
+          id: string;
+          user_id: string;
+          name: string;
+          description: string | null;
+          content: string;
+          structured_data: any | null; // JSONB field for AI parsing
+          is_active: boolean;
+          version: number;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: Omit<Database['public']['Tables']['user_strategies']['Row'], 'id' | 'created_at' | 'updated_at'>;
+        Update: Partial<Database['public']['Tables']['user_strategies']['Insert']>;
       };
     };
   };

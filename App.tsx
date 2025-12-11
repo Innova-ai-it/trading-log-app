@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { HashRouter as Router, Routes, Route, Link, useLocation } from 'react-router-dom';
-import { LayoutDashboard, List, Menu, X, Settings as SettingsIcon, LogOut, FileText } from 'lucide-react';
+import { LayoutDashboard, List, Menu, X, Settings as SettingsIcon, LogOut, FileText, BarChart3 } from 'lucide-react';
 import clsx from 'clsx';
 import Dashboard from './pages/Dashboard';
 import TradingLog from './pages/TradingLog';
 import MonthlyReport from './pages/MonthlyReport';
+import Strategies from './pages/Strategies';
 import { useSupabaseStore } from './store/useSupabaseStore';
 import { SettingsModal } from './components/SettingsModal';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
@@ -49,6 +50,7 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
         <nav className="flex-1 p-4 space-y-2">
           <NavLink to="/dashboard" icon={<LayoutDashboard className="w-5 h-5" />} label="Dashboard" />
           <NavLink to="/trading-log" icon={<List className="w-5 h-5" />} label="Trading Log" />
+          <NavLink to="/strategies" icon={<BarChart3 className="w-5 h-5" />} label="Strategies" />
           <NavLink to="/monthly-report" icon={<FileText className="w-5 h-5" />} label="Monthly Report" />
         </nav>
 
@@ -119,6 +121,9 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
               <NavLink to="/trading-log" icon={<List className="w-5 h-5" />} label="Trading Log" />
             </div>
             <div onClick={() => setMobileMenuOpen(false)}>
+              <NavLink to="/strategies" icon={<BarChart3 className="w-5 h-5" />} label="Strategies" />
+            </div>
+            <div onClick={() => setMobileMenuOpen(false)}>
               <NavLink to="/monthly-report" icon={<FileText className="w-5 h-5" />} label="Monthly Report" />
             </div>
             
@@ -179,12 +184,13 @@ const AppContent: React.FC = () => {
   return (
     <Router>
       <Layout>
-        <Routes>
-          <Route path="/" element={<TradingLog />} />
-          <Route path="/trading-log" element={<TradingLog />} />
-          <Route path="/dashboard" element={<Dashboard />} />
-          <Route path="/monthly-report" element={<MonthlyReport />} />
-        </Routes>
+            <Routes>
+              <Route path="/" element={<TradingLog />} />
+              <Route path="/trading-log" element={<TradingLog />} />
+              <Route path="/dashboard" element={<Dashboard />} />
+              <Route path="/strategies" element={<Strategies />} />
+              <Route path="/monthly-report" element={<MonthlyReport />} />
+            </Routes>
       </Layout>
     </Router>
   );

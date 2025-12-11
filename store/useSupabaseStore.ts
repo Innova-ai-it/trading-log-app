@@ -41,6 +41,7 @@ const defaultSettings: Settings = {
   weeklySL: 0,
   monthlyTP: 0,
   monthlySL: 0,
+  monthlyTarget: undefined,
 };
 
 export const useSupabaseStore = create<SupabaseStoreState>((set, get) => ({
@@ -381,6 +382,7 @@ function mapSupabaseToSettings(data: any): Settings {
     weeklySL: Number(data.weekly_sl),
     monthlyTP: Number(data.monthly_tp),
     monthlySL: Number(data.monthly_sl),
+    monthlyTarget: data.monthly_target ? Number(data.monthly_target) : undefined,
   };
 }
 
@@ -394,6 +396,7 @@ function mapSettingsToSupabase(settings: Settings): any {
     weekly_sl: settings.weeklySL,
     monthly_tp: settings.monthlyTP,
     monthly_sl: settings.monthlySL,
+    monthly_target: settings.monthlyTarget,
   };
 }
 

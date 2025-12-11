@@ -30,7 +30,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
     const numValue = parseFloat(value);
     setFormData(prev => ({
       ...prev,
-      [field]: isNaN(numValue) ? 0 : numValue
+      [field]: isNaN(numValue) ? (field === 'monthlyTarget' ? undefined : 0) : numValue
     }));
   };
 
@@ -143,6 +143,44 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
                 <span className="absolute right-2 top-2 text-gray-500 text-xs">%</span>
               </div>
               <p className="text-[10px] text-gray-500">Use negative value (e.g. -15%)</p>
+            </div>
+          </div>
+
+          {/* Monthly Settings */}
+          <div className="space-y-3 border border-border p-3 rounded-lg bg-background/30">
+            <h3 className="text-sm font-semibold text-yellow-400">Monthly Targets (%)</h3>
+            <p className="text-[10px] text-gray-400">Calculated on monthly starting bankroll</p>
+            
+            <div className="space-y-1.5">
+              <label className="text-xs text-gray-400">Target Profit %</label>
+              <div className="relative">
+                <input
+                  type="number"
+                  step="0.1"
+                  placeholder="e.g. 20"
+                  className="w-full bg-background border border-border rounded p-2 text-sm text-white focus:border-yellow-500 outline-none pr-6"
+                  value={formData.monthlyTP}
+                  onChange={(e) => handleChange('monthlyTP', e.target.value)}
+                />
+                <span className="absolute right-2 top-2 text-gray-500 text-xs">%</span>
+              </div>
+              <p className="text-[10px] text-gray-500">Usato come obiettivo mensile per il tracking</p>
+            </div>
+            
+            <div className="space-y-1.5">
+              <label className="text-xs text-gray-400">Stop Loss %</label>
+              <div className="relative">
+                <input
+                  type="number"
+                  step="0.1"
+                  placeholder="e.g. -30"
+                  className="w-full bg-background border border-border rounded p-2 text-sm text-white focus:border-danger outline-none pr-6"
+                  value={formData.monthlySL}
+                  onChange={(e) => handleChange('monthlySL', e.target.value)}
+                />
+                <span className="absolute right-2 top-2 text-gray-500 text-xs">%</span>
+              </div>
+              <p className="text-[10px] text-gray-500">Use negative value (e.g. -30%)</p>
             </div>
           </div>
 

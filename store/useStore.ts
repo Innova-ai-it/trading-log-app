@@ -29,7 +29,8 @@ const defaultSettings: Settings = {
   weeklyTP: 0,
   weeklySL: 0,
   monthlyTP: 0,
-  monthlySL: 0
+  monthlySL: 0,
+  monthlyTarget: undefined
 };
 
 export const useStore = create<StoreState>()(

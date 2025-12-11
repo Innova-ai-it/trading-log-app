@@ -4,6 +4,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { Trade, TradeResult } from '../types';
 import { useSupabaseStore } from '../store/useSupabaseStore';
 import { calculateProfitLoss, calculateTotalCapitalInvested } from '../utils/helpers';
+import { AutocompleteInput } from './AutocompleteInput';
 
 interface TradeModalProps {
   isOpen: boolean;
@@ -26,6 +27,62 @@ const emptyTrade: Partial<Trade> = {
   notes: ''
 };
 
+// Funzioni helper per estrarre valori unici dai trades
+const getUniqueCompetitions = (trades: Trade[]): string[] => {
+  const competitionCount = new Map<string, number>();
+  
+  trades.forEach(trade => {
+    if (trade.competition && trade.competition.trim() !== '') {
+      const comp = trade.competition.trim();
+      competitionCount.set(comp, (competitionCount.get(comp) || 0) + 1);
+    }
+  });
+  
+  // Restituisce solo le competizioni usate più di una volta
+  return Array.from(competitionCount.entries())
+    .filter(([_, count]) => count > 1)
+    .map(([comp, _]) => comp)
+    .sort();
+};
+
+const getUniqueTeams = (trades: Trade[]): string[] => {
+  const teamCount = new Map<string, number>();
+  
+  trades.forEach(trade => {
+    if (trade.homeTeam && trade.homeTeam.trim() !== '') {
+      const team = trade.homeTeam.trim();
+      teamCount.set(team, (teamCount.get(team) || 0) + 1);
+    }
+    if (trade.awayTeam && trade.awayTeam.trim() !== '') {
+      const team = trade.awayTeam.trim();
+      teamCount.set(team, (teamCount.get(team) || 0) + 1);
+    }
+  });
+  
+  // Restituisce solo le squadre usate più di una volta
+  return Array.from(teamCount.entries())
+    .filter(([_, count]) => count > 1)
+    .map(([team, _]) => team)
+    .sort();
+};
+
+const getUniqueStrategies = (trades: Trade[]): string[] => {
+  const strategyCount = new Map<string, number>();
+  
+  trades.forEach(trade => {
+    if (trade.strategy && trade.strategy.trim() !== '') {
+      const strategy = trade.strategy.trim();
+      strategyCount.set(strategy, (strategyCount.get(strategy) || 0) + 1);
+    }
+  });
+  
+  // Restituisce solo le strategie usate più di una volta
+  return Array.from(strategyCount.entries())
+    .filter(([_, count]) => count > 1)
+    .map(([strategy, _]) => strategy)
+    .sort();
+};
+
 export const TradeModal: React.FC<TradeModalProps> = ({ isOpen, onClose, editTrade }) => {
   const [formData, setFormData] = useState<Partial<Trade>>(emptyTrade);
   const { addTrade, updateTrade, settings, trades, adjustments } = useSupabaseStore();
@@ -37,6 +94,11 @@ export const TradeModal: React.FC<TradeModalProps> = ({ isOpen, onClose, editTra
     const totalProfit = trades.reduce((sum, t) => sum + (t.profitLoss || 0), 0);
     return totalCapitalInvested + totalProfit;
   }, [settings.initialBank, adjustments, trades]);
+
+  // Calcola i suggerimenti dai trades esistenti
+  const competitionSuggestions = useMemo(() => getUniqueCompetitions(trades), [trades]);
+  const teamSuggestions = useMemo(() => getUniqueTeams(trades), [trades]);
+  const strategySuggestions = useMemo(() => getUniqueStrategies(trades), [trades]);
 
   useEffect(() => {
     if (editTrade) {
@@ -60,6 +122,7 @@ export const TradeModal: React.FC<TradeModalProps> = ({ isOpen, onClose, editTra
       setFormData(prev => ({ ...prev, stakeEuro: calculatedStake }));
     }
   }, [formData.stakePercent, currentBankroll]);
+
 
   // Phase 2: Auto-calc P/L based on Result, Odds, Stake
   // Only runs if the user hasn't manually edited the P/L field recently OR if they just changed the result type
@@ -153,54 +216,42 @@ export const TradeModal: React.FC<TradeModalProps> = ({ isOpen, onClose, editTra
             </div>
 
             {/* Competition */}
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-gray-300">Competition *</label>
-              <input
-                type="text"
-                required
-                placeholder="e.g. Premier League"
-                className="w-full bg-background border border-border rounded-lg p-2.5 text-white focus:ring-2 focus:ring-primary outline-none"
-                value={formData.competition}
-                onChange={(e) => handleChange('competition', e.target.value)}
-              />
-            </div>
+            <AutocompleteInput
+              value={formData.competition || ''}
+              onChange={(value) => handleChange('competition', value)}
+              suggestions={competitionSuggestions}
+              placeholder="e.g. Premier League"
+              required
+              label="Competition *"
+            />
 
             {/* Home Team */}
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-gray-300">Home Team *</label>
-              <input
-                type="text"
-                required
-                className="w-full bg-background border border-border rounded-lg p-2.5 text-white focus:ring-2 focus:ring-primary outline-none"
-                value={formData.homeTeam}
-                onChange={(e) => handleChange('homeTeam', e.target.value)}
-              />
-            </div>
+            <AutocompleteInput
+              value={formData.homeTeam || ''}
+              onChange={(value) => handleChange('homeTeam', value)}
+              suggestions={teamSuggestions}
+              required
+              label="Home Team *"
+            />
 
             {/* Away Team */}
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-gray-300">Away Team *</label>
-              <input
-                type="text"
-                required
-                className="w-full bg-background border border-border rounded-lg p-2.5 text-white focus:ring-2 focus:ring-primary outline-none"
-                value={formData.awayTeam}
-                onChange={(e) => handleChange('awayTeam', e.target.value)}
-              />
-            </div>
+            <AutocompleteInput
+              value={formData.awayTeam || ''}
+              onChange={(value) => handleChange('awayTeam', value)}
+              suggestions={teamSuggestions}
+              required
+              label="Away Team *"
+            />
 
             {/* Strategy */}
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-gray-300">Strategy *</label>
-              <input
-                type="text"
-                required
-                placeholder="e.g. Over 2.5"
-                className="w-full bg-background border border-border rounded-lg p-2.5 text-white focus:ring-2 focus:ring-primary outline-none"
-                value={formData.strategy}
-                onChange={(e) => handleChange('strategy', e.target.value)}
-              />
-            </div>
+            <AutocompleteInput
+              value={formData.strategy || ''}
+              onChange={(value) => handleChange('strategy', value)}
+              suggestions={strategySuggestions}
+              placeholder="e.g. Over 2.5"
+              required
+              label="Strategy *"
+            />
 
             {/* Position (Back/Lay) - Solo informativo */}
             <div className="space-y-2">

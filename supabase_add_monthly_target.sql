@@ -1,0 +1,14 @@
+-- ============================================
+-- Monthly Targets: Now using monthly_tp and monthly_sl (percentages)
+-- ============================================
+-- Note: The monthly_target column is no longer needed
+-- Monthly targets are now calculated from monthly_tp (percentage) 
+-- which already exists in the settings table
+--
+-- If you had monthly_target column, you can drop it:
+-- ALTER TABLE settings DROP COLUMN IF EXISTS monthly_target;
+--
+-- The monthly_tp and monthly_sl columns already exist and are used for:
+-- - monthly_tp: Monthly target profit percentage (e.g. 20 for 20%)
+-- - monthly_sl: Monthly stop loss percentage (e.g. -30 for -30%)
+

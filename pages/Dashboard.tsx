@@ -4,12 +4,11 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   BarChart, Bar, PieChart, Pie, Cell, Legend
 } from 'recharts';
-import { TrendingUp, TrendingDown, DollarSign, Activity, Award, Target, Ban, Calendar, PlusCircle, Trophy, Zap, BarChart3, AlertTriangle, Info } from 'lucide-react';
+import { TrendingUp, TrendingDown, DollarSign, Activity, Award, Target, Ban, Calendar, PlusCircle, Trophy, Zap, AlertTriangle, Info } from 'lucide-react';
 import { calculateBankrollHistory, calculateTotalCapitalInvested, formatCurrency } from '../utils/helpers';
 import { TradeResult, AdjustmentType } from '../types';
 import { AdjustmentModal } from '../components/AdjustmentModal';
 import { calculateCurrentStreak } from '../utils/reportCalculations';
-import { StrategyDashboard } from '../components/StrategyDashboard';
 
 const Dashboard: React.FC = () => {
   const { trades, settings, adjustments } = useSupabaseStore();
@@ -19,7 +18,6 @@ const Dashboard: React.FC = () => {
     [initialBankroll, adjustments]
   );
   const [isAdjustmentModalOpen, setAdjustmentModalOpen] = useState(false);
-  const [showStrategyDashboard, setShowStrategyDashboard] = useState(false);
 
   // Current Streak
   const currentStreak = useMemo(() => calculateCurrentStreak(trades), [trades]);
@@ -163,10 +161,6 @@ const Dashboard: React.FC = () => {
     { name: 'Void', value: metrics.voids, color: '#06b6d4' },
   ].filter(d => d.value > 0);
 
-  if (showStrategyDashboard) {
-    return <StrategyDashboard onBack={() => setShowStrategyDashboard(false)} />;
-  }
-
   return (
     <div className="space-y-6 pb-20">
       <div className="flex flex-col md:flex-row gap-4 justify-between items-start md:items-center">
@@ -175,13 +169,6 @@ const Dashboard: React.FC = () => {
           <p className="text-gray-400">Overview of your trading performance</p>
         </div>
         <div className="flex gap-2">
-          <button 
-            onClick={() => setShowStrategyDashboard(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg text-white text-sm font-medium transition-colors shadow-lg shadow-blue-500/20"
-          >
-            <BarChart3 className="w-4 h-4" />
-            Strategy Analysis
-          </button>
           <button 
             onClick={() => setAdjustmentModalOpen(true)}
             className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded-lg text-white text-sm font-medium transition-colors shadow-lg shadow-purple-500/20"
@@ -418,9 +405,10 @@ const Dashboard: React.FC = () => {
         {/* Bankroll Growth */}
         <div className="lg:col-span-2 bg-surface p-6 rounded-xl border border-border">
           <h3 className="text-lg font-semibold text-white mb-6">Bankroll Evolution</h3>
-          <div className="h-[300px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={bankrollHistory}>
+          {bankrollHistory.length > 0 ? (
+            <div className="h-[300px] w-full min-h-[300px]">
+              <ResponsiveContainer width="100%" height={300}>
+                <LineChart data={bankrollHistory}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#404040" />
                 <XAxis dataKey="date" stroke="#9ca3af" fontSize={12} tickMargin={10} minTickGap={30} />
                 <YAxis stroke="#9ca3af" fontSize={12} />
@@ -436,17 +424,23 @@ const Dashboard: React.FC = () => {
                   dot={false}
                   activeDot={{ r: 8 }} 
                 />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          ) : (
+            <div className="h-[300px] w-full flex items-center justify-center">
+              <p className="text-gray-500">No data available</p>
+            </div>
+          )}
         </div>
 
         {/* Win/Loss Distribution */}
         <div className="bg-surface p-6 rounded-xl border border-border">
           <h3 className="text-lg font-semibold text-white mb-6">Outcome Distribution</h3>
-          <div className="h-[300px] w-full relative">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
+          {pieData.length > 0 ? (
+            <div className="h-[300px] w-full min-h-[300px] relative">
+              <ResponsiveContainer width="100%" height={300}>
+                <PieChart>
                 <Pie
                   data={pieData}
                   cx="50%"
@@ -464,12 +458,17 @@ const Dashboard: React.FC = () => {
                    contentStyle={{ backgroundColor: '#2d2d2d', borderColor: '#404040', color: '#fff' }}
                 />
                 <Legend verticalAlign="bottom" height={36}/>
-              </PieChart>
-            </ResponsiveContainer>
-            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-              <span className="text-2xl font-bold text-white">{metrics.totalTrades}</span>
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                <span className="text-2xl font-bold text-white">{metrics.totalTrades}</span>
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="h-[300px] w-full flex items-center justify-center">
+              <p className="text-gray-500">No data available</p>
+            </div>
+          )}
         </div>
       </div>
 
@@ -478,9 +477,10 @@ const Dashboard: React.FC = () => {
          {/* Top Strategies */}
          <div className="bg-surface p-6 rounded-xl border border-border">
           <h3 className="text-lg font-semibold text-white mb-6">Top Strategies by Profit</h3>
-          <div className="h-[300px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={strategyData} layout="vertical">
+          {strategyData.length > 0 ? (
+            <div className="h-[300px] w-full min-h-[300px]">
+              <ResponsiveContainer width="100%" height={300}>
+                <BarChart data={strategyData} layout="vertical">
                 <CartesianGrid strokeDasharray="3 3" stroke="#404040" horizontal={false} />
                 <XAxis type="number" stroke="#9ca3af" hide />
                 <YAxis dataKey="name" type="category" width={120} stroke="#9ca3af" fontSize={12} />
@@ -493,9 +493,14 @@ const Dashboard: React.FC = () => {
                     <Cell key={`cell-${index}`} fill={entry.value >= 0 ? '#22c55e' : '#ef4444'} />
                   ))}
                 </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          ) : (
+            <div className="h-[300px] w-full flex items-center justify-center">
+              <p className="text-gray-500">No data available</p>
+            </div>
+          )}
         </div>
 
         {/* Best/Worst Days */}
