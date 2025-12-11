@@ -306,7 +306,8 @@ export interface TradingPlanFeedback {
   userId: string;
   matchIdentifier: string; // Competizione + squadre
   recommendationText?: string; // Il consiglio specifico dato nel piano
-  wasFollowed?: boolean; // Se l'utente ha seguito il consiglio
+  wasExecuted?: boolean; // Se il trade è stato effettuato
+  wasFollowed?: boolean; // Deprecated: usa wasExecuted
   wasProfitable?: boolean; // Se il trade è stato profittevole
   actualResult?: string; // Risultato reale
   feedbackNotes?: string; // Note aggiuntive

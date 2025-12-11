@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { HashRouter as Router, Routes, Route, Link, useLocation } from 'react-router-dom';
-import { LayoutDashboard, List, Menu, X, Settings as SettingsIcon, LogOut, FileText, BarChart3 } from 'lucide-react';
+import { LayoutDashboard, List, Menu, X, Settings as SettingsIcon, LogOut, FileText, BarChart3, Sparkles } from 'lucide-react';
 import clsx from 'clsx';
 import Dashboard from './pages/Dashboard';
 import TradingLog from './pages/TradingLog';
 import MonthlyReport from './pages/MonthlyReport';
 import Strategies from './pages/Strategies';
+import DailyPlan from './pages/DailyPlan';
 import { useSupabaseStore } from './store/useSupabaseStore';
 import { SettingsModal } from './components/SettingsModal';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
@@ -51,6 +52,7 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
           <NavLink to="/dashboard" icon={<LayoutDashboard className="w-5 h-5" />} label="Dashboard" />
           <NavLink to="/trading-log" icon={<List className="w-5 h-5" />} label="Trading Log" />
           <NavLink to="/strategies" icon={<BarChart3 className="w-5 h-5" />} label="Strategies" />
+          <NavLink to="/daily-plan" icon={<Sparkles className="w-5 h-5" />} label="Daily Plan" />
           <NavLink to="/monthly-report" icon={<FileText className="w-5 h-5" />} label="Monthly Report" />
         </nav>
 
@@ -124,6 +126,9 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
               <NavLink to="/strategies" icon={<BarChart3 className="w-5 h-5" />} label="Strategies" />
             </div>
             <div onClick={() => setMobileMenuOpen(false)}>
+              <NavLink to="/daily-plan" icon={<Sparkles className="w-5 h-5" />} label="Daily Plan" />
+            </div>
+            <div onClick={() => setMobileMenuOpen(false)}>
               <NavLink to="/monthly-report" icon={<FileText className="w-5 h-5" />} label="Monthly Report" />
             </div>
             
@@ -189,6 +194,7 @@ const AppContent: React.FC = () => {
               <Route path="/trading-log" element={<TradingLog />} />
               <Route path="/dashboard" element={<Dashboard />} />
               <Route path="/strategies" element={<Strategies />} />
+              <Route path="/daily-plan" element={<DailyPlan />} />
               <Route path="/monthly-report" element={<MonthlyReport />} />
             </Routes>
       </Layout>
