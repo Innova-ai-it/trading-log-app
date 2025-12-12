@@ -32,7 +32,31 @@ export interface GeneratedPlan {
 }
 
 /**
- * Genera piano di trading giornaliero usando OpenAI
+ * Interfaccia per il risultato dello Stage 1 (Quick Filtering)
+ */
+interface QuickFilterResult {
+  matchId: number;
+  homeTeam: string;
+  awayTeam: string;
+  league: string;
+  time: string;
+  bestStrategy: {
+    strategyId: string;
+    strategyName: string;
+    score: number; // Score semplificato 0-100
+  };
+}
+
+/**
+ * Genera piano di trading giornaliero usando Two-Stage Hybrid Approach
+ * 
+ * STAGE 1: Quick Filtering (gpt-4o-mini)
+ *   - Analizza tutte le partite con score semplificato
+ *   - Seleziona top 8-10 candidate
+ * 
+ * STAGE 2: Deep Analysis (gpt-4o)
+ *   - Analisi completa solo sulle candidate selezionate
+ *   - Reasoning dettagliato con consigli live trading
  */
 export async function generateDailyPlan(
   matchesWithStats: Array<{ match: any; stats: MatchPreMatchStats }>,
@@ -43,18 +67,118 @@ export async function generateDailyPlan(
     throw new Error('OpenAI API key non configurata. Configura VITE_OPENAI_API_KEY nel file .env');
   }
 
-  // Prepara il prompt per OpenAI
-  const prompt = buildAnalysisPrompt(matchesWithStats, strategies);
+  console.log(`🚀 STAGE 1: Quick Filtering - Analizzando ${matchesWithStats.length} partite...`);
 
-  // Chiama OpenAI
-  const response = await fetch('https://api.openai.com/v1/chat/completions', {
+  // ============================================
+  // STAGE 1: QUICK FILTERING (gpt-4o-mini)
+  // ============================================
+  const quickFilterPrompt = buildQuickFilterPrompt(matchesWithStats, strategies);
+  
+  const stage1Response = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${apiKey}`
     },
     body: JSON.stringify({
-      model: 'gpt-4o', // Usa gpt-4o per limiti TPM più alti e migliori performance
+      model: 'gpt-4o-mini', // Modello economico per filtraggio rapido
+      messages: [
+        {
+          role: 'system',
+          content: `Sei un esperto analista di trading sportivo. Il tuo compito è FILTRARE rapidamente le partite migliori usando uno SCORE SEMPLIFICATO (0-100).
+
+SISTEMA DI SCORING SEMPLIFICATO:
+Score = 50 (base) + TIMING_SCORE + PATTERN_SCORE + STATS_SCORE_SEMPLIFICATO + BONUS_MINIMI
+
+TIMING SCORE (-25 a +25):
+- FIRST_HALF + pattern FIRST_HALF = +25
+- FIRST_HALF + pattern BALANCED = +10 (se goalsFH > goalsSH)
+- FIRST_HALF + pattern SECOND_HALF = -15
+- SECOND_HALF + pattern SECOND_HALF = +25
+- SECOND_HALF + pattern BALANCED = +10 (se goalsSH > goalsFH)
+- SECOND_HALF + pattern FIRST_HALF = -15
+- FULL_MATCH / LIVE_FLEXIBLE = +15
+
+PATTERN SCORE (-20 a +20):
+- Pattern corrisponde = +20
+- Pattern parziale (FIRST_HALF + BALANCED con goalsFH > SH) = +8
+- Pattern opposto = -10
+- ANY = +5
+
+STATISTICHE SCORE SEMPLIFICATO (-20 a +15):
+Verifica i requisiti principali (minAvgGoalsPerMatch, minXGFirstHalfAvg, minGoalsFirstHalf, minGoalsSecondHalf):
+- 100% PASS = +15
+- 80-99% PASS = +5
+- 60-79% PASS = 0
+- 40-59% PASS = -10
+- <40% PASS = -20
+
+BONUS MINIMI (-5 a +8):
+- Form eccellente (entrambe >8/10) = +5
+- Form scarsa (una <4/10) = -5
+- Lega TOP = +3
+
+Calcola score per ogni partita, seleziona la strategia migliore (score più alto), e restituisci solo le top 8-10 partite con score più alto.`
+        },
+        {
+          role: 'user',
+          content: quickFilterPrompt
+        }
+      ],
+      temperature: 0.5, // Più deterministico per filtraggio
+      response_format: { type: 'json_object' }
+    })
+  });
+
+  if (!stage1Response.ok) {
+    const error = await stage1Response.json().catch(() => ({ error: { message: 'Unknown error' } }));
+    throw new Error(`OpenAI API error (Stage 1): ${error.error?.message || 'Unknown error'}`);
+  }
+
+  const stage1Data = await stage1Response.json();
+  let stage1Result: { candidates: QuickFilterResult[] };
+  
+  try {
+    stage1Result = JSON.parse(stage1Data.choices[0].message.content);
+  } catch (parseError) {
+    const content = stage1Data.choices[0].message.content;
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      stage1Result = JSON.parse(jsonMatch[0]);
+    } else {
+      throw new Error('Risposta AI Stage 1 non valida: formato JSON non trovato');
+    }
+  }
+
+  const candidates = stage1Result.candidates || [];
+  console.log(`✅ STAGE 1 completato: selezionate ${candidates.length} candidate su ${matchesWithStats.length} partite`);
+
+  if (candidates.length === 0) {
+    throw new Error('Nessuna partita candidata trovata nello Stage 1');
+  }
+
+  // Filtra matchesWithStats per includere solo le candidate
+  const candidateMatchIds = new Set(candidates.map(c => c.matchId));
+  const candidateMatchesWithStats = matchesWithStats.filter(m => 
+    candidateMatchIds.has(m.stats.match.id)
+  );
+
+  console.log(`🚀 STAGE 2: Deep Analysis - Analizzando ${candidateMatchesWithStats.length} candidate...`);
+  console.log(`📋 Partite candidate per Stage 2:`, candidateMatchesWithStats.map(m => `${m.stats.homeTeam.name} vs ${m.stats.awayTeam.name}`).join(', '));
+
+  // ============================================
+  // STAGE 2: DEEP ANALYSIS (gpt-4o)
+  // ============================================
+  const deepAnalysisPrompt = buildAnalysisPrompt(candidateMatchesWithStats, strategies);
+
+  const stage2Response = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`
+    },
+    body: JSON.stringify({
+      model: 'gpt-4o', // Modello potente per analisi completa
       messages: [
         {
           role: 'system',
@@ -296,7 +420,7 @@ Analizza strategie e match seguendo questo framework.`
         },
         {
           role: 'user',
-          content: prompt
+          content: deepAnalysisPrompt
         }
       ],
       temperature: 0.7,
@@ -304,41 +428,35 @@ Analizza strategie e match seguendo questo framework.`
     })
   });
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: { message: 'Unknown error' } }));
-    throw new Error(`OpenAI API error: ${error.error?.message || 'Unknown error'}`);
+  if (!stage2Response.ok) {
+    const error = await stage2Response.json().catch(() => ({ error: { message: 'Unknown error' } }));
+    throw new Error(`OpenAI API error (Stage 2): ${error.error?.message || 'Unknown error'}`);
   }
 
-  const data = await response.json();
+  const stage2Data = await stage2Response.json();
   let aiResponse;
   
   try {
-    aiResponse = JSON.parse(data.choices[0].message.content);
+    aiResponse = JSON.parse(stage2Data.choices[0].message.content);
   } catch (parseError) {
-    // Se la risposta non è JSON valido, prova a estrarre JSON dal testo
-    const content = data.choices[0].message.content;
+    const content = stage2Data.choices[0].message.content;
     const jsonMatch = content.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
       aiResponse = JSON.parse(jsonMatch[0]);
     } else {
-      throw new Error('Risposta AI non valida: formato JSON non trovato');
+      throw new Error('Risposta AI Stage 2 non valida: formato JSON non trovato');
     }
   }
 
   // Processa risposta AI
   const matches: MatchAnalysis[] = aiResponse.matches || [];
+  console.log(`✅ STAGE 2 completato: analizzate ${matches.length} partite`);
   
-  // Valida reasoning per ogni match
+  // Valida reasoning per ogni match (solo bestStrategy)
   matches.forEach(match => {
     if (!validateReasoning(match.bestStrategy.reasoning)) {
       console.warn(`⚠️ Reasoning incompleto per match ${match.matchId} (${match.homeTeam} vs ${match.awayTeam})`);
     }
-    // Valida anche reasoning delle altre strategie
-    match.allScores?.forEach(score => {
-      if (!validateReasoning(score.reasoning)) {
-        console.warn(`⚠️ Reasoning incompleto per strategia ${score.strategyName} nel match ${match.matchId}`);
-      }
-    });
   });
   
   // Ordina per confidence e seleziona top 3-5
@@ -347,8 +465,10 @@ Analizza strategie e match seguendo questo framework.`
   );
   const topMatches = sortedMatches.slice(0, Math.min(5, Math.max(3, sortedMatches.length)));
 
-  // Genera piano in formato testo
-  const planText = generatePlanText(topMatches, matchesWithStats);
+  console.log(`📊 Partite finali selezionate: ${topMatches.length}`);
+
+  // Genera piano in formato testo (usa candidateMatchesWithStats che contiene solo le partite analizzate)
+  const planText = generatePlanText(topMatches, candidateMatchesWithStats);
 
   return {
     planText,
@@ -380,7 +500,110 @@ function validateReasoning(reasoning: string): boolean {
 }
 
 /**
- * Costruisce il prompt per OpenAI
+ * Costruisce il prompt semplificato per Stage 1 (Quick Filtering)
+ */
+function buildQuickFilterPrompt(
+  matchesWithStats: Array<{ match: any; stats: MatchPreMatchStats }>,
+  strategies: UserStrategy[]
+): string {
+  // Formato semplificato delle strategie (solo info essenziali)
+  const strategiesText = strategies.map(s => {
+    const parsed = s.parsedData || {};
+    const metadata = (parsed as any).strategyMetadata || {};
+    
+    let metadataSection = '';
+    if (metadata.timing) {
+      metadataSection += `TIMING: ${metadata.timing}`;
+    }
+    if (metadata.requiredScoringPattern) {
+      metadataSection += ` | PATTERN: ${metadata.requiredScoringPattern}`;
+    }
+    metadataSection += ` | AGGRESSIVITÀ: ${metadata.aggressiveness || 'MODERATE'}`;
+    
+    if (metadata.requiredPreMatchStats) {
+      const stats = metadata.requiredPreMatchStats;
+      metadataSection += `\nREQUISITI:`;
+      if (stats.minXGFirstHalfAvg !== undefined) metadataSection += ` xG_FH>=${stats.minXGFirstHalfAvg}`;
+      if (stats.minGoalsFirstHalf !== undefined) metadataSection += ` Goals_FH>=${stats.minGoalsFirstHalf}`;
+      if (stats.minGoalsSecondHalf !== undefined) metadataSection += ` Goals_SH>=${stats.minGoalsSecondHalf}`;
+      if (stats.minAvgGoalsPerMatch !== undefined) metadataSection += ` AvgGoals>=${stats.minAvgGoalsPerMatch}`;
+    }
+    
+    return `ID: ${s.id} | NOME: ${s.name}${metadataSection ? `\n${metadataSection}` : ''}`;
+  }).join('\n\n');
+
+  // Helper per formattare numeri in modo sicuro
+  const safeNumber = (value: any, decimals: number = 2, defaultValue: string = '0.00'): string => {
+    if (value === null || value === undefined) return defaultValue;
+    const num = typeof value === 'number' ? value : parseFloat(value);
+    return isNaN(num) ? defaultValue : num.toFixed(decimals);
+  };
+
+  // Formato semplificato delle partite (solo statistiche chiave)
+  const matchesText = matchesWithStats.map(({ match, stats }) => {
+    // Calcola pattern combinato
+    const goalsFH = stats.combined.goalsFirstHalf || 0;
+    const goalsSH = stats.combined.goalsSecondHalf || 0;
+    let pattern = 'BALANCED';
+    if (goalsFH > goalsSH * 1.3) pattern = 'FIRST_HALF';
+    else if (goalsSH > goalsFH * 1.3) pattern = 'SECOND_HALF';
+
+    return `ID: ${stats.match.id}
+${stats.homeTeam.name} vs ${stats.awayTeam.name} | ${stats.match.leagueName} | ${stats.match.time}
+Pattern: ${pattern}
+xG_FH_combined: ${safeNumber(stats.combined.xGFirstHalfAvg)}
+Goals_FH_combined: ${goalsFH}
+Goals_SH_combined: ${goalsSH}
+AvgGoals: ${safeNumber(stats.combined.avgGoalsPerMatch)}
+Form_H: ${(stats.homeTeam.form || []).join('')} | Form_A: ${(stats.awayTeam.form || []).join('')}`;
+  }).join('\n\n');
+
+  return `Analizza tutte le partite e calcola uno SCORE SEMPLIFICATO (0-100) per ogni strategia.
+
+STRATEGIE:
+${strategiesText}
+
+PARTITE:
+${matchesText}
+
+═══════════════════════════════════════════════════════════════
+SCORING SEMPLIFICATO
+═══════════════════════════════════════════════════════════════
+
+Per ogni partita:
+1. Analizza tutte le strategie
+2. Calcola score semplificato per ogni strategia:
+   - BASE: 50
+   - TIMING: +25 (allineato), +10 (parziale), -15 (opposto), +15 (FULL_MATCH/LIVE)
+   - PATTERN: +20 (corrisponde), +8 (parziale), -10 (opposto), +5 (ANY)
+   - STATISTICHE: +15 (100% requisiti), +5 (80-99%), 0 (60-79%), -10 (40-59%), -20 (<40%)
+   - BONUS: +5 (form eccellente), -5 (form scarsa), +3 (lega TOP)
+3. Seleziona la strategia con score più alto come bestStrategy
+4. Restituisci solo le TOP 8-10 partite con score più alto
+
+FORMATO JSON:
+{
+  "candidates": [
+    {
+      "matchId": 12345,
+      "homeTeam": "Juventus",
+      "awayTeam": "Pafos",
+      "league": "UEFA Champions League",
+      "time": "21:00",
+      "bestStrategy": {
+        "strategyId": "uuid",
+        "strategyName": "Over 0.5 First Half",
+        "score": 85
+      }
+    }
+  ]
+}
+
+IMPORTANTE: Restituisci SOLO le 8-10 partite con score più alto. Ordina per score decrescente.`;
+}
+
+/**
+ * Costruisce il prompt completo per Stage 2 (Deep Analysis)
  */
 function buildAnalysisPrompt(
   matchesWithStats: Array<{ match: any; stats: MatchPreMatchStats }>,
@@ -487,6 +710,8 @@ STATISTICHE COMBINATE:
   return `
 Analizza ogni strategia e assegna score (0-100) basandoti sull'allineamento tra strategia e statistiche match.
 
+⚠️ IMPORTANTE: Devi analizzare e restituire TUTTE le partite fornite qui sotto. Non filtrare o escludere nessuna partita. Analizza tutte e restituisci tutte nel JSON. Se hai ricevuto ${matchesWithStats.length} partite, devi restituire ${matchesWithStats.length} partite nell'array "matches".
+
 STRATEGIE:
 ${strategiesText}
 
@@ -583,6 +808,8 @@ Per ogni partita:
    - MOTIVAZIONE STRATEGIA (perché questa strategia ha vinto rispetto alle altre)
    - CONSIGLI LIVE TRADING (entry, exit, gestione rischio, monitoraggio, piano B)
    - RACCOMANDAZIONE OPERATIVA (riassunto breve)
+
+🔴 CRITICO: Restituisci TUTTE le partite fornite nell'array "matches". Non escludere nessuna partita. Se hai ricevuto ${matchesWithStats.length} partite, devi restituire esattamente ${matchesWithStats.length} partite nel JSON. L'ordinamento finale verrà fatto dal sistema, tu devi solo analizzare e restituire tutte le partite.
 `;
 }
 

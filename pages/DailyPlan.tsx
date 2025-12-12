@@ -1,226 +1,47 @@
-import React, { useState, useEffect } from 'react';
-import { useAuth } from '../contexts/AuthContext';
-import { supabase } from '../lib/supabase';
+import React, { useState } from 'react';
 import { fetchTodayMatches, fetchPreMatchStats, MatchPreMatchStats } from '../utils/dailyPlanService';
-import { generateDailyPlan, MatchAnalysis } from '../utils/aiPlanGenerator';
-import { UserStrategy, TradingPlan } from '../types';
-import { Sparkles, Loader2, CheckCircle2, XCircle, AlertCircle, Calendar, TrendingUp, FileText, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Loader2, Calendar, TrendingUp, X, Clock, AlertCircle } from 'lucide-react';
 
-interface PlanMatchFeedback {
-  matchIdentifier: string;
-  recommendationText: string;
-  wasExecuted: boolean;
-  wasProfitable?: boolean;
-  actualResult?: string;
-  feedbackNotes?: string;
+interface MatchWithStats {
+  match: any;
+  stats: MatchPreMatchStats;
 }
 
 const DailyPlan: React.FC = () => {
-  const { user } = useAuth();
   const [loading, setLoading] = useState(false);
-  const [generating, setGenerating] = useState(false);
-  const [todayPlan, setTodayPlan] = useState<TradingPlan | null>(null);
-  const [planMatches, setPlanMatches] = useState<MatchAnalysis[]>([]);
-  const [feedback, setFeedback] = useState<Record<string, PlanMatchFeedback>>({});
-  const [allFeedbackMatches, setAllFeedbackMatches] = useState<Array<{
-    matchIdentifier: string;
-    feedback: PlanMatchFeedback;
-    league?: string;
-    homeTeam?: string;
-    awayTeam?: string;
-    time?: string;
-    strategyName?: string;
-    confidence?: number;
-  }>>([]);
+  const [matches, setMatches] = useState<MatchWithStats[]>([]);
+  const [selectedMatch, setSelectedMatch] = useState<MatchWithStats | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [currentPage, setCurrentPage] = useState(1);
-  const itemsPerPage = 5; // Mostra 5 partite per pagina
 
-  // Funzione di mapping database (snake_case) -> TypeScript (camelCase)
-  const mapSupabaseToTradingPlan = (data: any): TradingPlan => {
-    return {
-      id: data.id,
-      userId: data.user_id,
-      planDate: data.plan_date,
-      planContent: data.plan_content,
-      matchesAnalyzed: data.matches_analyzed,
-      contextSnapshot: data.context_snapshot,
-      createdAt: data.created_at,
-      updatedAt: data.updated_at
-    };
-  };
-
-  // Carica piano del giorno se esiste
-  useEffect(() => {
-    if (user) {
-      loadTodayPlan();
-    }
-  }, [user]);
-
-  const loadTodayPlan = async () => {
-    if (!user) return;
-
-    try {
-      const today = new Date().toISOString().split('T')[0];
-      const { data, error } = await supabase
-        .from('trading_plans')
-        .select('*')
-        .eq('user_id', user.id)
-        .eq('plan_date', today)
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      if (error && error.code !== 'PGRST116') throw error;
-
-      if (data) {
-        const mappedPlan = mapSupabaseToTradingPlan(data);
-        setTodayPlan(mappedPlan);
-        const planData = data.plan_data as any;
-        if (planData?.topMatches) {
-          setPlanMatches(planData.topMatches);
-        }
-
-        // Carica TUTTI i feedback esistenti del piano, non solo quelli delle partite attuali
-        const { data: feedbackData } = await supabase
-          .from('plan_match_feedback')
-          .select('*')
-          .eq('plan_id', data.id)
-          .order('created_at', { ascending: false });
-
-        if (feedbackData) {
-          const feedbackMap: Record<string, PlanMatchFeedback> = {};
-          const feedbackMatches: Array<{
-            matchIdentifier: string;
-            feedback: PlanMatchFeedback;
-            league?: string;
-            homeTeam?: string;
-            awayTeam?: string;
-            time?: string;
-            strategyName?: string;
-            confidence?: number;
-          }> = [];
-
-          feedbackData.forEach(f => {
-            const fb: PlanMatchFeedback = {
-              matchIdentifier: f.match_identifier,
-              recommendationText: f.recommendation_text || '',
-              wasExecuted: f.was_executed || false,
-              wasProfitable: f.was_profitable ?? undefined,
-              actualResult: f.actual_result || undefined,
-              feedbackNotes: f.feedback_notes || undefined
-            };
-            feedbackMap[f.match_identifier] = fb;
-
-            // Estrai informazioni dalla match_identifier (formato: "League - HomeTeam vs AwayTeam")
-            const parts = f.match_identifier.split(' - ');
-            const league = parts[0] || '';
-            const teams = parts[1] || '';
-            const [homeTeam, awayTeam] = teams.split(' vs ');
-
-            // Cerca se questa partita è nel piano attuale per avere strategia e confidence
-            const currentMatch = planData?.topMatches?.find((m: MatchAnalysis) => 
-              `${m.league} - ${m.homeTeam} vs ${m.awayTeam}` === f.match_identifier
-            );
-
-            feedbackMatches.push({
-              matchIdentifier: f.match_identifier,
-              feedback: fb,
-              league,
-              homeTeam,
-              awayTeam,
-              time: currentMatch?.time,
-              strategyName: currentMatch?.bestStrategy?.strategyName,
-              confidence: currentMatch?.bestStrategy?.confidence
-            });
-          });
-
-          // Aggiungi anche le partite attuali che non hanno ancora feedback
-          if (planData?.topMatches) {
-            planData.topMatches.forEach((m: MatchAnalysis) => {
-              const matchIdentifier = `${m.league} - ${m.homeTeam} vs ${m.awayTeam}`;
-              if (!feedbackMatches.find(fm => fm.matchIdentifier === matchIdentifier)) {
-                feedbackMatches.push({
-                  matchIdentifier,
-                  feedback: feedbackMap[matchIdentifier] || {
-                    matchIdentifier,
-                    recommendationText: m.bestStrategy.reasoning,
-                    wasExecuted: false
-                  },
-                  league: m.league,
-                  homeTeam: m.homeTeam,
-                  awayTeam: m.awayTeam,
-                  time: m.time,
-                  strategyName: m.bestStrategy.strategyName,
-                  confidence: m.bestStrategy.confidence
-                });
-              }
-            });
-          }
-          
-          setFeedback(feedbackMap);
-          setAllFeedbackMatches(feedbackMatches);
-        } else {
-          // Se non ci sono feedback, inizializza con le partite attuali
-          if (planData?.topMatches) {
-            const initialMatches = planData.topMatches.map((m: MatchAnalysis) => ({
-              matchIdentifier: `${m.league} - ${m.homeTeam} vs ${m.awayTeam}`,
-              feedback: {
-                matchIdentifier: `${m.league} - ${m.homeTeam} vs ${m.awayTeam}`,
-                recommendationText: m.bestStrategy.reasoning,
-                wasExecuted: false
-              },
-              league: m.league,
-              homeTeam: m.homeTeam,
-              awayTeam: m.awayTeam,
-              time: m.time,
-              strategyName: m.bestStrategy.strategyName,
-              confidence: m.bestStrategy.confidence
-            }));
-            setAllFeedbackMatches(initialMatches);
-          }
-        }
-      }
-    } catch (error: any) {
-      console.error('Errore caricamento piano:', error);
-      setError(`Errore caricamento: ${error.message}`);
-    }
-  };
-
-  const handleGeneratePlan = async () => {
-    if (!user) return;
-
-    setGenerating(true);
+  const handleLoadMatches = async () => {
+    setLoading(true);
     setError(null);
+    
     try {
-      // 1. Recupera partite del giorno
-      setLoading(true);
-      const matches = await fetchTodayMatches();
+      // 1. Recupera partite del giorno (già filtrate per top campionati)
+      const todayMatches = await fetchTodayMatches();
       
-      if (matches.length === 0) {
+      if (todayMatches.length === 0) {
         setError('Nessuna partita trovata per oggi nei top campionati');
-        setGenerating(false);
         setLoading(false);
         return;
       }
 
-      // 2. Recupera statistiche pre-match per ogni partita
-      const matchesWithStats = [];
-      let successCount = 0;
+      // 2. Recupera statistiche per ogni partita
+      const matchesWithStats: MatchWithStats[] = [];
       
-      console.log(`📊 Processando statistiche per ${matches.length} partite`);
+      console.log(`📊 Processando statistiche per ${todayMatches.length} partite`);
       
-      for (let i = 0; i < matches.length; i++) {
-        const match = matches[i];
+      for (let i = 0; i < todayMatches.length; i++) {
+        const match = todayMatches[i];
         try {
-          console.log(`📈 [${i + 1}/${matches.length}] Recupero statistiche per ${match.teams?.home?.name} vs ${match.teams?.away?.name}`);
+          console.log(`📈 [${i + 1}/${todayMatches.length}] Recupero statistiche per ${match.teams?.home?.name} vs ${match.teams?.away?.name}`);
           
           const stats = await fetchPreMatchStats(match);
           matchesWithStats.push({ match, stats });
-          successCount++;
           
-          // Pausa tra le partite per evitare rate limiting (solo se non è l'ultima)
-          if (i < matches.length - 1) {
+          // Pausa per evitare rate limiting
+          if (i < todayMatches.length - 1) {
             await new Promise(resolve => setTimeout(resolve, 300));
           }
         } catch (error: any) {
@@ -231,298 +52,39 @@ const DailyPlan: React.FC = () => {
 
       if (matchesWithStats.length === 0) {
         setError('Impossibile recuperare statistiche per le partite. Verifica la configurazione API.');
-        setGenerating(false);
         setLoading(false);
         return;
       }
 
-      // 3. Recupera strategie dal database
-      const { data: strategiesRaw, error: strategiesError } = await supabase
-        .from('user_strategies')
-        .select('*')
-        .eq('user_id', user.id)
-        .eq('is_active', true);
-
-      if (strategiesError) throw strategiesError;
-
-      if (!strategiesRaw || strategiesRaw.length === 0) {
-        setError('Nessuna strategia attiva trovata. Crea almeno una strategia prima di generare un piano.');
-        setGenerating(false);
-        setLoading(false);
-        return;
-      }
-
-      // Mappa structured_data a parsedData per UserStrategy
-      const strategies = strategiesRaw.map((s: any) => ({
-        ...s,
-        parsedData: s.structured_data || null,
-      }));
-
-      // 4. Genera piano con AI
-      const generatedPlan = await generateDailyPlan(matchesWithStats, strategies);
-
-      // 5. Salva piano nel database
-      const today = new Date().toISOString().split('T')[0];
-      
-      // Cerca se esiste già un piano per oggi
-      const { data: existingPlan } = await supabase
-        .from('trading_plans')
-        .select('id')
-        .eq('user_id', user.id)
-        .eq('plan_date', today)
-        .maybeSingle();
-
-      let savedPlan;
-
-      if (existingPlan) {
-        // Aggiorna piano esistente (mantiene i feedback collegati)
-        const { data, error: updateError } = await supabase
-          .from('trading_plans')
-          .update({
-            plan_content: generatedPlan.planText,
-            plan_data: {
-              matches: generatedPlan.matches,
-              topMatches: generatedPlan.topMatches
-            },
-            matches_analyzed: matchesWithStats.map(m => ({
-              matchId: m.stats.match.id,
-              homeTeam: m.stats.homeTeam.name,
-              awayTeam: m.stats.awayTeam.name,
-              league: m.stats.match.leagueName
-            })),
-            context_snapshot: {
-              totalMatches: matches.length,
-              matchesWithStats: successCount,
-              strategiesUsed: strategies.length,
-              generatedAt: new Date().toISOString()
-            },
-            updated_at: new Date().toISOString()
-          })
-          .eq('id', existingPlan.id)
-          .select()
-          .single();
-
-        if (updateError) throw updateError;
-        savedPlan = data;
-      } else {
-        // Crea nuovo piano
-        const { data, error: insertError } = await supabase
-          .from('trading_plans')
-          .insert({
-            user_id: user.id,
-            plan_date: today,
-            plan_content: generatedPlan.planText,
-            plan_data: {
-              matches: generatedPlan.matches,
-              topMatches: generatedPlan.topMatches
-            },
-            matches_analyzed: matchesWithStats.map(m => ({
-              matchId: m.stats.match.id,
-              homeTeam: m.stats.homeTeam.name,
-              awayTeam: m.stats.awayTeam.name,
-              league: m.stats.match.leagueName
-            })),
-            context_snapshot: {
-              totalMatches: matches.length,
-              matchesWithStats: successCount,
-              strategiesUsed: strategies.length,
-              generatedAt: new Date().toISOString()
-            }
-          })
-          .select()
-          .single();
-
-        if (insertError) throw insertError;
-        savedPlan = data;
-      }
-
-      if (savedPlan) {
-        const mappedPlan = mapSupabaseToTradingPlan(savedPlan);
-        setTodayPlan(mappedPlan);
-        
-        // Carica TUTTI i feedback esistenti (non solo quelli delle partite attuali)
-        const { data: feedbackData } = await supabase
-          .from('plan_match_feedback')
-          .select('*')
-          .eq('plan_id', savedPlan.id);
-
-        const feedbackMap: Record<string, PlanMatchFeedback> = {};
-        const feedbackMatches: Array<{
-          matchIdentifier: string;
-          feedback: PlanMatchFeedback;
-          league?: string;
-          homeTeam?: string;
-          awayTeam?: string;
-          time?: string;
-          strategyName?: string;
-          confidence?: number;
-        }> = [];
-
-        if (feedbackData && feedbackData.length > 0) {
-          feedbackData.forEach(f => {
-            const fb: PlanMatchFeedback = {
-              matchIdentifier: f.match_identifier,
-              recommendationText: f.recommendation_text || '',
-              wasExecuted: f.was_executed || false,
-              wasProfitable: f.was_profitable ?? undefined,
-              actualResult: f.actual_result || undefined,
-              feedbackNotes: f.feedback_notes || undefined
-            };
-            feedbackMap[f.match_identifier] = fb;
-
-            // Estrai informazioni dalla match_identifier
-            const parts = f.match_identifier.split(' - ');
-            const league = parts[0] || '';
-            const teams = parts[1] || '';
-            const [homeTeam, awayTeam] = teams.split(' vs ');
-
-            // Cerca se questa partita è nel nuovo piano per avere strategia e confidence
-            const currentMatch = generatedPlan.topMatches.find(m => 
-              `${m.league} - ${m.homeTeam} vs ${m.awayTeam}` === f.match_identifier
-            );
-
-            feedbackMatches.push({
-              matchIdentifier: f.match_identifier,
-              feedback: fb,
-              league,
-              homeTeam,
-              awayTeam,
-              time: currentMatch?.time,
-              strategyName: currentMatch?.bestStrategy?.strategyName,
-              confidence: currentMatch?.bestStrategy?.confidence
-            });
-          });
-        }
-
-        // Aggiungi anche le nuove partite che non hanno ancora feedback
-        generatedPlan.topMatches.forEach(match => {
-          const matchIdentifier = `${match.league} - ${match.homeTeam} vs ${match.awayTeam}`;
-          if (!feedbackMatches.find(fm => fm.matchIdentifier === matchIdentifier)) {
-            feedbackMatches.push({
-              matchIdentifier,
-              feedback: feedbackMap[matchIdentifier] || {
-                matchIdentifier,
-                recommendationText: match.bestStrategy.reasoning,
-                wasExecuted: false
-              },
-              league: match.league,
-              homeTeam: match.homeTeam,
-              awayTeam: match.awayTeam,
-              time: match.time,
-              strategyName: match.bestStrategy.strategyName,
-              confidence: match.bestStrategy.confidence
-            });
-          }
-        });
-
-        // Merge con feedback esistenti nello state (non sovrascrive)
-        setFeedback(prev => ({ ...prev, ...feedbackMap }));
-        setAllFeedbackMatches(feedbackMatches);
-      }
-      setPlanMatches(generatedPlan.topMatches);
-      setCurrentPage(1); // Reset alla prima pagina quando generi un nuovo piano
-      // NON resettare feedback - devono rimanere per memoria AI
-
+      setMatches(matchesWithStats);
     } catch (error: any) {
-      console.error('Errore generazione piano:', error);
       setError(`Errore: ${error.message || 'Errore sconosciuto'}`);
     } finally {
       setLoading(false);
-      setGenerating(false);
     }
   };
 
-  const handleFeedbackUpdate = async (
-    matchIdentifier: string,
-    updates: Partial<PlanMatchFeedback>
-  ) => {
-    if (!user || !todayPlan) return;
-
-    const currentFeedback = feedback[matchIdentifier] || {
-      matchIdentifier,
-      recommendationText: '',
-      wasExecuted: false
-    };
-
-    const updatedFeedback = { ...currentFeedback, ...updates };
-    setFeedback(prev => ({ ...prev, [matchIdentifier]: updatedFeedback }));
-
-    // Aggiorna anche allFeedbackMatches
-    setAllFeedbackMatches(prev => {
-      const existingIndex = prev.findIndex(fm => fm.matchIdentifier === matchIdentifier);
-      if (existingIndex >= 0) {
-        const updated = [...prev];
-        updated[existingIndex] = {
-          ...updated[existingIndex],
-          feedback: updatedFeedback
-        };
-        return updated;
-      } else {
-        // Se non esiste, aggiungilo
-        const parts = matchIdentifier.split(' - ');
-        const league = parts[0] || '';
-        const teams = parts[1] || '';
-        const [homeTeam, awayTeam] = teams.split(' vs ');
-        const matchAnalysis = planMatches.find(m => 
-          `${m.league} - ${m.homeTeam} vs ${m.awayTeam}` === matchIdentifier
-        );
-        
-        return [...prev, {
-          matchIdentifier,
-          feedback: updatedFeedback,
-          league,
-          homeTeam,
-          awayTeam,
-          time: matchAnalysis?.time,
-          strategyName: matchAnalysis?.bestStrategy?.strategyName,
-          confidence: matchAnalysis?.bestStrategy?.confidence
-        }];
-      }
-    });
-
-    try {
-      // Cerca feedback esistente
-      const { data: existing } = await supabase
-        .from('plan_match_feedback')
-        .select('id')
-        .eq('plan_id', todayPlan.id)
-        .eq('match_identifier', matchIdentifier)
-        .maybeSingle();
-
-      if (existing) {
-        // Update
-        await supabase
-          .from('plan_match_feedback')
-          .update({
-            was_executed: updatedFeedback.wasExecuted,
-            was_profitable: updatedFeedback.wasProfitable ?? null,
-            actual_result: updatedFeedback.actualResult || null,
-            feedback_notes: updatedFeedback.feedbackNotes || null,
-            updated_at: new Date().toISOString()
-          })
-          .eq('id', existing.id);
-      } else {
-        // Insert
-        const matchAnalysis = planMatches.find(m => 
-          `${m.league} - ${m.homeTeam} vs ${m.awayTeam}` === matchIdentifier
-        );
-        
-        await supabase
-          .from('plan_match_feedback')
-          .insert({
-            plan_id: todayPlan.id,
-            user_id: user.id,
-            match_identifier: matchIdentifier,
-            recommendation_text: matchAnalysis?.bestStrategy.reasoning || updatedFeedback.recommendationText,
-            was_executed: updatedFeedback.wasExecuted,
-            was_profitable: updatedFeedback.wasProfitable ?? null,
-            actual_result: updatedFeedback.actualResult || null,
-            feedback_notes: updatedFeedback.feedbackNotes || null
-          });
-      }
-    } catch (error) {
-      console.error('Errore salvataggio feedback:', error);
+  const getPatternColor = (pattern: string) => {
+    switch (pattern) {
+      case 'FIRST_HALF': return 'bg-blue-500/20 text-blue-400 border-blue-500/30';
+      case 'SECOND_HALF': return 'bg-orange-500/20 text-orange-400 border-orange-500/30';
+      case 'BALANCED': return 'bg-green-500/20 text-green-400 border-green-500/30';
+      default: return 'bg-gray-500/20 text-gray-400 border-gray-500/30';
     }
+  };
+
+  const getPatternLabel = (pattern: string) => {
+    switch (pattern) {
+      case 'FIRST_HALF': return 'Primo Tempo';
+      case 'SECOND_HALF': return 'Secondo Tempo';
+      case 'BALANCED': return 'Bilanciato';
+      default: return pattern;
+    }
+  };
+
+  const safeNumber = (value: number | null | undefined, decimals: number = 2): string => {
+    if (value === null || value === undefined) return '0.00';
+    return value.toFixed(decimals);
   };
 
   return (
@@ -531,27 +93,27 @@ const DailyPlan: React.FC = () => {
       <div className="flex flex-col md:flex-row gap-4 justify-between items-start md:items-center">
         <div>
           <h1 className="text-2xl font-bold text-white flex items-center gap-2">
-            <Sparkles className="w-6 h-6 text-blue-500" />
-            Piano di Trading Giornaliero
+            <Calendar className="w-6 h-6 text-blue-500" />
+            Partite di Oggi
           </h1>
           <p className="text-gray-400 mt-1">
-            Genera automaticamente il tuo piano di trading per le partite di oggi
+            Carica le partite dei top campionati con statistiche dettagliate
           </p>
         </div>
         <button
-          onClick={handleGeneratePlan}
-          disabled={generating || loading}
+          onClick={handleLoadMatches}
+          disabled={loading}
           className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 rounded-lg text-white font-medium transition-all shadow-lg shadow-blue-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          {generating || loading ? (
+          {loading ? (
             <>
               <Loader2 className="w-5 h-5 animate-spin" />
-              Generazione in corso...
+              Caricamento in corso...
             </>
           ) : (
             <>
-              <Sparkles className="w-5 h-5" />
-              Crea il tuo piano di trading giornaliero
+              <TrendingUp className="w-5 h-5" />
+              Carica Partite Oggi
             </>
           )}
         </button>
@@ -574,256 +136,310 @@ const DailyPlan: React.FC = () => {
         </div>
       )}
 
-      {/* Piano Generato */}
-      {todayPlan && planMatches.length > 0 && (
-        <div className="bg-surface rounded-xl border border-border p-6">
-          <div className="flex items-center justify-between mb-6">
-            <div className="flex items-center gap-3">
-              <Calendar className="w-5 h-5 text-blue-500" />
-              <h2 className="text-xl font-bold text-white">
-                Piano del {new Date(todayPlan.planDate).toLocaleDateString('it-IT', {
-                  weekday: 'long',
-                  year: 'numeric',
-                  month: 'long',
-                  day: 'numeric'
-                })}
-              </h2>
-            </div>
-            <div className="flex items-center gap-2 text-sm text-gray-400">
-              <TrendingUp className="w-4 h-4" />
-              {planMatches.length} partite selezionate
-            </div>
-          </div>
+      {/* Contatore Partite */}
+      {matches.length > 0 && (
+        <div className="flex items-center gap-2 text-sm text-gray-400">
+          <TrendingUp className="w-4 h-4" />
+          <span>{matches.length} partite caricate</span>
+        </div>
+      )}
 
-          {/* Piano Testo */}
-          <div className="bg-background/50 rounded-lg p-6 mb-6 border border-border/50">
-            <div className="flex items-center gap-2 mb-4">
-              <FileText className="w-4 h-4 text-blue-400" />
-              <h3 className="text-sm font-semibold text-gray-300">Piano Completo</h3>
-            </div>
-            {todayPlan.planContent ? (
-              <div className="max-h-[600px] overflow-y-auto pr-2">
-                <pre className="text-sm text-gray-200 whitespace-pre-wrap leading-relaxed font-sans">
-                  {todayPlan.planContent}
-                </pre>
-              </div>
-            ) : (
-              <p className="text-gray-400 text-sm">Nessun contenuto disponibile</p>
-            )}
-          </div>
-
-          {/* Match con Feedback */}
-          <div className="space-y-4">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-white">Feedback Partite</h3>
-              {(allFeedbackMatches.length > 0 ? allFeedbackMatches.length : planMatches.length) > itemsPerPage && (
-                <div className="flex items-center gap-2 text-sm text-gray-400">
-                  <span>
-                    Pagina {currentPage} di {Math.ceil((allFeedbackMatches.length > 0 ? allFeedbackMatches.length : planMatches.length) / itemsPerPage)}
-                  </span>
+      {/* Matches Grid */}
+      {matches.length > 0 && (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {matches.map((matchWithStats) => {
+            const { match, stats } = matchWithStats;
+            return (
+              <div
+                key={stats.match.id}
+                onClick={() => setSelectedMatch(matchWithStats)}
+                className="bg-surface rounded-xl border border-border p-5 cursor-pointer hover:border-blue-500/50 transition-all hover:shadow-lg hover:shadow-blue-500/10"
+              >
+                <div className="flex items-start justify-between mb-3">
+                  <div className="flex-1">
+                    <h3 className="text-white font-semibold text-lg">
+                      {stats.homeTeam.name}
+                    </h3>
+                    <p className="text-gray-400 text-sm">vs</p>
+                    <h3 className="text-white font-semibold text-lg">
+                      {stats.awayTeam.name}
+                    </h3>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-gray-400 text-sm">{stats.match.leagueName}</p>
+                    <div className="flex items-center gap-1 text-gray-400 text-sm mt-1">
+                      <Clock className="w-3 h-3" />
+                      {stats.match.time}
+                    </div>
+                  </div>
                 </div>
-              )}
-            </div>
-            
-            {/* Mostra TUTTI i feedback, non solo quelli delle partite attuali */}
-            {(allFeedbackMatches.length > 0 ? allFeedbackMatches : planMatches.map(match => ({
-              matchIdentifier: `${match.league} - ${match.homeTeam} vs ${match.awayTeam}`,
-              feedback: feedback[`${match.league} - ${match.homeTeam} vs ${match.awayTeam}`] || {
-                matchIdentifier: `${match.league} - ${match.homeTeam} vs ${match.awayTeam}`,
-                recommendationText: match.bestStrategy.reasoning,
-                wasExecuted: false
-              },
-              league: match.league,
-              homeTeam: match.homeTeam,
-              awayTeam: match.awayTeam,
-              time: match.time,
-              strategyName: match.bestStrategy.strategyName,
-              confidence: match.bestStrategy.confidence
-            })))
-              .slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage)
-              .map((item) => {
-              const matchIdentifier = item.matchIdentifier;
-              const matchFeedback = item.feedback;
 
-              return (
-                <div
-                  key={matchIdentifier}
-                  className="bg-background/50 rounded-lg p-4 border border-border"
-                >
-                  <div className="flex items-start justify-between mb-4">
-                    <div className="flex-1">
-                      <h4 className="text-white font-semibold">
-                        {item.homeTeam || 'N/A'} vs {item.awayTeam || 'N/A'}
-                      </h4>
-                      <p className="text-sm text-gray-400">
-                        {item.league || 'N/A'} {item.time ? `- ${item.time}` : ''}
+                <div className="space-y-2 mt-4 pt-4 border-t border-border/50">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-gray-400">Media Goal:</span>
+                    <span className="text-white font-medium">{safeNumber(stats.combined.avgGoalsPerMatch)}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-gray-400">Goal FH (ultimi 5):</span>
+                    <span className="text-white font-medium">{stats.combined.goalsFirstHalf}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-gray-400">Goal SH (ultimi 5):</span>
+                    <span className="text-white font-medium">{stats.combined.goalsSecondHalf}</span>
+                  </div>
+                  {stats.combined.goalsFirstHalf + stats.combined.goalsSecondHalf > 0 && (
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-gray-400">Distribuzione:</span>
+                      <span className="text-white font-medium text-xs">
+                        {Math.round((stats.combined.goalsFirstHalf / (stats.combined.goalsFirstHalf + stats.combined.goalsSecondHalf)) * 100)}% FH / 
+                        {Math.round((stats.combined.goalsSecondHalf / (stats.combined.goalsFirstHalf + stats.combined.goalsSecondHalf)) * 100)}% SH
+                      </span>
+                    </div>
+                  )}
+                  <div className="mt-3">
+                    <span className={`inline-block px-2 py-1 rounded text-xs font-medium border ${getPatternColor(stats.combined.scoringPattern)}`}>
+                      Pattern: {getPatternLabel(stats.combined.scoringPattern)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Modal Dettagli Partita */}
+      {selectedMatch && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setSelectedMatch(null)}>
+          <div className="bg-surface rounded-xl border border-border max-w-4xl w-full max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="sticky top-0 bg-surface border-b border-border p-6 flex items-center justify-between z-10">
+              <div>
+                <h2 className="text-2xl font-bold text-white">
+                  {selectedMatch.stats.homeTeam.name} vs {selectedMatch.stats.awayTeam.name}
+                </h2>
+                <p className="text-gray-400 mt-1">
+                  {selectedMatch.stats.match.leagueName} - {selectedMatch.stats.match.time}
+                </p>
+                {selectedMatch.stats.match.venue && (
+                  <p className="text-gray-400 text-sm mt-1">
+                    📍 {selectedMatch.stats.match.venue}
+                  </p>
+                )}
+                <p className="text-gray-400 text-sm mt-1">
+                  📅 {new Date(selectedMatch.stats.match.date).toLocaleDateString('it-IT', { 
+                    weekday: 'long', 
+                    year: 'numeric', 
+                    month: 'long', 
+                    day: 'numeric' 
+                  })}
+                </p>
+              </div>
+              <button
+                onClick={() => setSelectedMatch(null)}
+                className="text-gray-400 hover:text-white transition-colors"
+              >
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-6">
+              {/* Statistiche HOME */}
+              <div className="bg-background/50 rounded-lg p-5 border border-border/50">
+                <h3 className="text-xl font-bold text-white mb-4">{selectedMatch.stats.homeTeam.name}</h3>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <p className="text-gray-400 text-sm mb-1">Media Goal Fatti</p>
+                    <p className="text-white font-semibold text-lg">{safeNumber(selectedMatch.stats.homeTeam.avgGoalsFor)}</p>
+                  </div>
+                  <div>
+                    <p className="text-gray-400 text-sm mb-1">Media Goal Subiti</p>
+                    <p className="text-white font-semibold text-lg">{safeNumber(selectedMatch.stats.homeTeam.avgGoalsAgainst)}</p>
+                  </div>
+                  <div>
+                    <p className="text-gray-400 text-sm mb-1">Rapporto Fatti/Subiti</p>
+                    <p className="text-white font-semibold text-lg">
+                      {safeNumber(selectedMatch.stats.homeTeam.avgGoalsFor / selectedMatch.stats.homeTeam.avgGoalsAgainst, 2)}
+                    </p>
+                  </div>
+                  {selectedMatch.stats.homeTeam.goalsFH + selectedMatch.stats.homeTeam.goalsSH > 0 && (
+                    <div>
+                      <p className="text-gray-400 text-sm mb-1">Distribuzione Goal</p>
+                      <p className="text-white font-semibold text-sm">
+                        {Math.round((selectedMatch.stats.homeTeam.goalsFH / (selectedMatch.stats.homeTeam.goalsFH + selectedMatch.stats.homeTeam.goalsSH)) * 100)}% FH / 
+                        {Math.round((selectedMatch.stats.homeTeam.goalsSH / (selectedMatch.stats.homeTeam.goalsFH + selectedMatch.stats.homeTeam.goalsSH)) * 100)}% SH
                       </p>
-                      {item.strategyName && (
-                        <div className="mt-2 flex items-center gap-2">
-                          <span className="text-sm text-blue-400">
-                            Strategia: {item.strategyName}
-                          </span>
-                          {item.confidence !== undefined && (
-                            <span className="text-xs text-gray-500">
-                              (Confidence: {item.confidence}%)
-                            </span>
-                          )}
-                        </div>
-                      )}
                     </div>
-                    <div className="flex items-center gap-2">
-                      {matchFeedback.wasExecuted ? (
-                        matchFeedback.wasProfitable === true ? (
-                          <CheckCircle2 className="w-5 h-5 text-green-500" title="Vincente" />
-                        ) : matchFeedback.wasProfitable === false ? (
-                          <XCircle className="w-5 h-5 text-red-500" title="Perdente" />
-                        ) : (
-                          <AlertCircle className="w-5 h-5 text-yellow-500" title="In attesa" />
-                        )
-                      ) : (
-                        <div className="w-5 h-5 border-2 border-gray-500 rounded-full" title="Non eseguito" />
-                      )}
+                  )}
+                  <div>
+                    <p className="text-gray-400 text-sm mb-1">Goal Primo Tempo (ultimi 5)</p>
+                    <p className="text-white font-semibold text-lg">{selectedMatch.stats.homeTeam.goalsFH}</p>
+                  </div>
+                  <div>
+                    <p className="text-gray-400 text-sm mb-1">Goal Secondo Tempo (ultimi 5)</p>
+                    <p className="text-white font-semibold text-lg">{selectedMatch.stats.homeTeam.goalsSH}</p>
+                  </div>
+                  <div>
+                    <p className="text-gray-400 text-sm mb-1">xG Primo Tempo Medio</p>
+                    <p className="text-white font-semibold text-lg">{safeNumber(selectedMatch.stats.homeTeam.xGFirstHalfAvg)}</p>
+                  </div>
+                  <div>
+                    <p className="text-gray-400 text-sm mb-1">Pattern</p>
+                    <span className={`inline-block px-3 py-1 rounded text-sm font-medium border ${getPatternColor(selectedMatch.stats.homeTeam.scoringPattern)}`}>
+                      {getPatternLabel(selectedMatch.stats.homeTeam.scoringPattern)}
+                    </span>
+                  </div>
+                  <div className="col-span-2">
+                    <p className="text-gray-400 text-sm mb-2">Form (ultimi 5 match)</p>
+                    <div className="flex gap-2">
+                      {selectedMatch.stats.homeTeam.form.map((result, idx) => (
+                        <span key={idx} className={`w-10 h-10 rounded flex items-center justify-center text-sm font-bold ${
+                          result === 'W' ? 'bg-green-500/20 text-green-400 border border-green-500/30' :
+                          result === 'D' ? 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30' :
+                          'bg-red-500/20 text-red-400 border border-red-500/30'
+                        }`}>
+                          {result}
+                        </span>
+                      ))}
                     </div>
                   </div>
-
-                  {/* Controlli Feedback */}
-                  <div className="space-y-3 pt-3 border-t border-border/50">
-                    <div className="flex items-center gap-4">
-                      <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={matchFeedback.wasExecuted}
-                          onChange={(e) =>
-                            handleFeedbackUpdate(matchIdentifier, {
-                              wasExecuted: e.target.checked
-                            })
-                          }
-                          className="w-4 h-4 rounded border-border bg-background text-blue-600 focus:ring-blue-500"
-                        />
-                        Trade effettuato
-                      </label>
-                    </div>
-
-                    {matchFeedback.wasExecuted && (
-                      <>
-                        <div className="flex items-center gap-4">
-                          <label className="text-sm text-gray-300">Risultato:</label>
-                          <select
-                            value={
-                              matchFeedback.wasProfitable === true
-                                ? 'win'
-                                : matchFeedback.wasProfitable === false
-                                ? 'lose'
-                                : 'pending'
-                            }
-                            onChange={(e) =>
-                              handleFeedbackUpdate(matchIdentifier, {
-                                wasProfitable:
-                                  e.target.value === 'win'
-                                    ? true
-                                    : e.target.value === 'lose'
-                                    ? false
-                                    : undefined
-                              })
-                            }
-                            className="bg-background border border-border rounded px-3 py-1.5 text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                          >
-                            <option value="pending">In attesa</option>
-                            <option value="win">Vincente</option>
-                            <option value="lose">Perdente</option>
-                          </select>
-                        </div>
-
-                        {/* Campo per il risultato effettivo della partita */}
-                        <div>
-                          <label className="block text-sm text-gray-300 mb-1">
-                            Risultato effettivo (es. 2-1, 0-0):
-                          </label>
-                          <input
-                            type="text"
-                            value={matchFeedback.actualResult || ''}
-                            onChange={(e) =>
-                              handleFeedbackUpdate(matchIdentifier, {
-                                actualResult: e.target.value
-                              })
-                            }
-                            placeholder="es. 2-1, 0-0, 3-2..."
-                            className="w-full bg-background border border-border rounded px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                          />
-                        </div>
-
-                        <div>
-                          <label className="block text-sm text-gray-300 mb-1">
-                            Note (opzionale):
-                          </label>
-                          <textarea
-                            value={matchFeedback.feedbackNotes || ''}
-                            onChange={(e) =>
-                              handleFeedbackUpdate(matchIdentifier, {
-                                feedbackNotes: e.target.value
-                              })
-                            }
-                            placeholder="Aggiungi note sul trade..."
-                            className="w-full bg-background border border-border rounded px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-                            rows={2}
-                          />
-                        </div>
-                      </>
-                    )}
-                  </div>
                 </div>
-              );
-            })}
-            
-            {/* Controlli Paginazione */}
-            {(allFeedbackMatches.length > 0 ? allFeedbackMatches.length : planMatches.length) > itemsPerPage && (
-              <div className="flex items-center justify-center gap-4 pt-4 border-t border-border/50">
-                <button
-                  onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
-                  disabled={currentPage === 1}
-                  className="flex items-center gap-2 px-4 py-2 bg-background border border-border rounded-lg text-white disabled:opacity-50 disabled:cursor-not-allowed hover:bg-background/80 transition-colors"
-                >
-                  <ChevronLeft className="w-4 h-4" />
-                  Precedente
-                </button>
-                <div className="flex items-center gap-2">
-                  {Array.from({ length: Math.ceil((allFeedbackMatches.length > 0 ? allFeedbackMatches.length : planMatches.length) / itemsPerPage) }, (_, i) => i + 1).map(page => (
-                    <button
-                      key={page}
-                      onClick={() => setCurrentPage(page)}
-                      className={`w-8 h-8 rounded-lg text-sm transition-colors ${
-                        currentPage === page
-                          ? 'bg-blue-600 text-white'
-                          : 'bg-background border border-border text-gray-300 hover:bg-background/80'
-                      }`}
-                    >
-                      {page}
-                    </button>
-                  ))}
-                </div>
-                <button
-                  onClick={() => setCurrentPage(prev => Math.min(Math.ceil((allFeedbackMatches.length > 0 ? allFeedbackMatches.length : planMatches.length) / itemsPerPage), prev + 1))}
-                  disabled={currentPage === Math.ceil((allFeedbackMatches.length > 0 ? allFeedbackMatches.length : planMatches.length) / itemsPerPage)}
-                  className="flex items-center gap-2 px-4 py-2 bg-background border border-border rounded-lg text-white disabled:opacity-50 disabled:cursor-not-allowed hover:bg-background/80 transition-colors"
-                >
-                  Successiva
-                  <ChevronRight className="w-4 h-4" />
-                </button>
               </div>
-            )}
+
+              {/* Statistiche AWAY */}
+              <div className="bg-background/50 rounded-lg p-5 border border-border/50">
+                <h3 className="text-xl font-bold text-white mb-4">{selectedMatch.stats.awayTeam.name}</h3>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <p className="text-gray-400 text-sm mb-1">Media Goal Fatti</p>
+                    <p className="text-white font-semibold text-lg">{safeNumber(selectedMatch.stats.awayTeam.avgGoalsFor)}</p>
+                  </div>
+                  <div>
+                    <p className="text-gray-400 text-sm mb-1">Media Goal Subiti</p>
+                    <p className="text-white font-semibold text-lg">{safeNumber(selectedMatch.stats.awayTeam.avgGoalsAgainst)}</p>
+                  </div>
+                  <div>
+                    <p className="text-gray-400 text-sm mb-1">Rapporto Fatti/Subiti</p>
+                    <p className="text-white font-semibold text-lg">
+                      {safeNumber(selectedMatch.stats.awayTeam.avgGoalsFor / selectedMatch.stats.awayTeam.avgGoalsAgainst, 2)}
+                    </p>
+                  </div>
+                  {selectedMatch.stats.awayTeam.goalsFH + selectedMatch.stats.awayTeam.goalsSH > 0 && (
+                    <div>
+                      <p className="text-gray-400 text-sm mb-1">Distribuzione Goal</p>
+                      <p className="text-white font-semibold text-sm">
+                        {Math.round((selectedMatch.stats.awayTeam.goalsFH / (selectedMatch.stats.awayTeam.goalsFH + selectedMatch.stats.awayTeam.goalsSH)) * 100)}% FH / 
+                        {Math.round((selectedMatch.stats.awayTeam.goalsSH / (selectedMatch.stats.awayTeam.goalsFH + selectedMatch.stats.awayTeam.goalsSH)) * 100)}% SH
+                      </p>
+                    </div>
+                  )}
+                  <div>
+                    <p className="text-gray-400 text-sm mb-1">Goal Primo Tempo (ultimi 5)</p>
+                    <p className="text-white font-semibold text-lg">{selectedMatch.stats.awayTeam.goalsFH}</p>
+                  </div>
+                  <div>
+                    <p className="text-gray-400 text-sm mb-1">Goal Secondo Tempo (ultimi 5)</p>
+                    <p className="text-white font-semibold text-lg">{selectedMatch.stats.awayTeam.goalsSH}</p>
+                  </div>
+                  <div>
+                    <p className="text-gray-400 text-sm mb-1">xG Primo Tempo Medio</p>
+                    <p className="text-white font-semibold text-lg">{safeNumber(selectedMatch.stats.awayTeam.xGFirstHalfAvg)}</p>
+                  </div>
+                  <div>
+                    <p className="text-gray-400 text-sm mb-1">Pattern</p>
+                    <span className={`inline-block px-3 py-1 rounded text-sm font-medium border ${getPatternColor(selectedMatch.stats.awayTeam.scoringPattern)}`}>
+                      {getPatternLabel(selectedMatch.stats.awayTeam.scoringPattern)}
+                    </span>
+                  </div>
+                  <div className="col-span-2">
+                    <p className="text-gray-400 text-sm mb-2">Form (ultimi 5 match)</p>
+                    <div className="flex gap-2">
+                      {selectedMatch.stats.awayTeam.form.map((result, idx) => (
+                        <span key={idx} className={`w-10 h-10 rounded flex items-center justify-center text-sm font-bold ${
+                          result === 'W' ? 'bg-green-500/20 text-green-400 border border-green-500/30' :
+                          result === 'D' ? 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30' :
+                          'bg-red-500/20 text-red-400 border border-red-500/30'
+                        }`}>
+                          {result}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Statistiche COMBINATE */}
+              <div className="bg-background/50 rounded-lg p-5 border border-border/50">
+                <h3 className="text-xl font-bold text-white mb-4">Statistiche Combinate</h3>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <p className="text-gray-400 text-sm mb-1">Media Goal per Partita</p>
+                    <p className="text-white font-semibold text-lg">{safeNumber(selectedMatch.stats.combined.avgGoalsPerMatch)}</p>
+                  </div>
+                  <div>
+                    <p className="text-gray-400 text-sm mb-1">xG Primo Tempo Medio Combinato</p>
+                    <p className="text-white font-semibold text-lg">{safeNumber(selectedMatch.stats.combined.xGFirstHalfAvg)}</p>
+                  </div>
+                  <div>
+                    <p className="text-gray-400 text-sm mb-1">Goal Primo Tempo Combinati (ultimi 5)</p>
+                    <p className="text-white font-semibold text-lg">{selectedMatch.stats.combined.goalsFirstHalf}</p>
+                  </div>
+                  <div>
+                    <p className="text-gray-400 text-sm mb-1">Goal Secondo Tempo Combinati (ultimi 5)</p>
+                    <p className="text-white font-semibold text-lg">{selectedMatch.stats.combined.goalsSecondHalf}</p>
+                  </div>
+                  {selectedMatch.stats.combined.goalsFirstHalf + selectedMatch.stats.combined.goalsSecondHalf > 0 && (
+                    <div className="col-span-2">
+                      <p className="text-gray-400 text-sm mb-2">Distribuzione Goal Combinata</p>
+                      <div className="flex items-center gap-4">
+                        <div className="flex-1">
+                          <div className="flex items-center justify-between text-xs text-gray-400 mb-1">
+                            <span>Primo Tempo</span>
+                            <span>{Math.round((selectedMatch.stats.combined.goalsFirstHalf / (selectedMatch.stats.combined.goalsFirstHalf + selectedMatch.stats.combined.goalsSecondHalf)) * 100)}%</span>
+                          </div>
+                          <div className="w-full bg-gray-700 rounded-full h-2">
+                            <div 
+                              className="bg-blue-500 h-2 rounded-full" 
+                              style={{ width: `${(selectedMatch.stats.combined.goalsFirstHalf / (selectedMatch.stats.combined.goalsFirstHalf + selectedMatch.stats.combined.goalsSecondHalf)) * 100}%` }}
+                            ></div>
+                          </div>
+                        </div>
+                        <div className="flex-1">
+                          <div className="flex items-center justify-between text-xs text-gray-400 mb-1">
+                            <span>Secondo Tempo</span>
+                            <span>{Math.round((selectedMatch.stats.combined.goalsSecondHalf / (selectedMatch.stats.combined.goalsFirstHalf + selectedMatch.stats.combined.goalsSecondHalf)) * 100)}%</span>
+                          </div>
+                          <div className="w-full bg-gray-700 rounded-full h-2">
+                            <div 
+                              className="bg-orange-500 h-2 rounded-full" 
+                              style={{ width: `${(selectedMatch.stats.combined.goalsSecondHalf / (selectedMatch.stats.combined.goalsFirstHalf + selectedMatch.stats.combined.goalsSecondHalf)) * 100}%` }}
+                            ></div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  <div className="col-span-2">
+                    <p className="text-gray-400 text-sm mb-2">Pattern Combinato</p>
+                    <span className={`inline-block px-3 py-1 rounded text-sm font-medium border ${getPatternColor(selectedMatch.stats.combined.scoringPattern)}`}>
+                      {getPatternLabel(selectedMatch.stats.combined.scoringPattern)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       )}
 
-      {/* Nessun Piano */}
-      {!todayPlan && !generating && !loading && (
+      {/* Empty State */}
+      {!loading && matches.length === 0 && !error && (
         <div className="bg-surface rounded-xl border border-border p-12 text-center">
-          <Sparkles className="w-16 h-16 text-gray-500 mx-auto mb-4" />
+          <Calendar className="w-16 h-16 text-gray-500 mx-auto mb-4" />
           <p className="text-gray-400 mb-2 text-lg">
-            Nessun piano generato per oggi
+            Nessuna partita caricata
           </p>
-          <p className="text-sm text-gray-500 mb-6">
-            Clicca il pulsante sopra per generare automaticamente il tuo piano di trading basato sulle partite di oggi e le tue strategie
+          <p className="text-sm text-gray-500">
+            Clicca il pulsante sopra per caricare le partite di oggi con statistiche dettagliate
           </p>
         </div>
       )}
@@ -832,4 +448,3 @@ const DailyPlan: React.FC = () => {
 };
 
 export default DailyPlan;
-
