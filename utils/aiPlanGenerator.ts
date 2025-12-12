@@ -54,26 +54,245 @@ export async function generateDailyPlan(
       'Authorization': `Bearer ${apiKey}`
     },
     body: JSON.stringify({
-      model: 'gpt-4-turbo-preview', // Usa gpt-4-turbo-preview per analisi complesse
+      model: 'gpt-4o', // Usa gpt-4o per limiti TPM più alti e migliori performance
       messages: [
         {
           role: 'system',
-          content: `Sei un esperto analista di trading sportivo specializzato in calcio. Il tuo compito è analizzare partite di calcio e assegnare strategie di trading basate su statistiche pre-match dettagliate. 
+          content: `Sei un esperto analista di trading sportivo specializzato in strategie calcistiche. 
 
-Devi essere:
-- Preciso e analitico
-- Basarti esclusivamente sui dati forniti
-- Fornire raccomandazioni operative chiare e dettagliate
-- Assegnare punteggi da 0 a 100 basandoti sulla pertinenza statistica
-- Fornire reasoning dettagliato per ogni valutazione
+Il tuo compito è ANALIZZARE ogni strategia in 3 STEP e assegnare uno SCORE TRASPARENTE (0-100).
 
-Il formato delle raccomandazioni deve essere simile a questo esempio:
-"Consiglio un ingresso sugli Over 1.5 primo tempo, entrando ad ogni mezzo punto di distanza, in caso di nessun goal alla mezz'ora uscire ed aprire un back sugli over 0.5 primo tempo."
+═══════════════════════════════════════════════════════════════
+STEP 1: COMPRENSIONE STRATEGIA
+═══════════════════════════════════════════════════════════════
 
-Oppure:
-"Consiglio un ingresso in Both Teams to Score, in caso di goal primo tempo togliere 50% di rischio e restare a mercato."
+Per OGNI strategia, devi PRIMA estrarre:
 
-Le raccomandazioni devono essere operative, con entry points, exit conditions e gestione del rischio.`
+1. **TIMING OPERATIVO** (quando si entra nel trade):
+   - FIRST_HALF: Entry durante primo tempo (0'-45')
+   - SECOND_HALF: Entry durante secondo tempo (45'-90')
+   - FULL_MATCH: Entry pre-match o inizio partita
+   - LIVE_FLEXIBLE: Entry variabile in base a momentum
+
+2. **MERCATO TARGET** (su cosa si punta):
+   - Over 0.5 FH / Over 1.5 / Over 2.5
+   - Lay the Draw
+   - BTTS (Both Teams To Score)
+   - Back squadra favorita
+   - Altro (specifica)
+
+3. **PATTERN RICHIESTO** (che tipo di match cerca):
+   - FIRST_HALF: Match con goal concentrati nel primo tempo
+   - SECOND_HALF: Match con goal concentrati nel secondo tempo
+   - BALANCED: Match con goal distribuiti
+   - HIGH_SCORING: Match con molti goal totali
+   - LATE_GOALS: Match con goal tardivi (75-90')
+   - ANY: Qualsiasi pattern va bene
+
+4. **REQUISITI STATISTICI OBBLIGATORI**:
+   Estrai dal campo \`requiredPreMatchStats\` o dal testo della strategia:
+   - minXGFirstHalfAvg: numero (es. 0.8)
+   - minGoalsFirstHalf: numero (es. 3)
+   - minGoalsSecondHalf: numero (es. 10)
+   - minAvgGoalsPerMatch: numero (es. 2.5)
+   - Altri requisiti specifici
+
+5. **AGGRESSIVITÀ STRATEGIA**:
+   - CONSERVATIVE: Richiede match perfetto, poche eccezioni
+   - MODERATE: Accetta piccoli compromessi
+   - AGGRESSIVE: Opportunistica, cerca value anche fuori target
+
+═══════════════════════════════════════════════════════════════
+STEP 2: ESTRAZIONE DATI MATCH
+═══════════════════════════════════════════════════════════════
+
+Dal match, estrai e CALCOLA:
+
+1. **STATISTICHE CHIAVE**:
+   - xGFirstHalfAvg_combined: (xGFH_home + xGFH_away) / 2
+   - goalsFirstHalf_combined: goalsFH_home + goalsFH_away
+   - goalsSecondHalf_combined: goalsSH_home + goalsSH_away
+   - avgGoalsPerMatch_combined: (avgGoalsFor_home + avgGoalsFor_away) / 2
+
+2. **PATTERN COMBINATO** (come segnano insieme):
+   Se goalsFirstHalf > goalsSecondHalf * 1.3 → FIRST_HALF
+   Se goalsSecondHalf > goalsFirstHalf * 1.3 → SECOND_HALF
+   Altrimenti → BALANCED
+
+3. **FORM E MOMENTUM**:
+   - Form casa: W=+2, D=+1, L=0 → Score totale (max 10)
+   - Form trasferta: W=+2, D=+1, L=0 → Score totale (max 10)
+
+═══════════════════════════════════════════════════════════════
+STEP 3: SISTEMA DI SCORING TRASPARENTE (0-100)
+═══════════════════════════════════════════════════════════════
+
+FORMULA BASE:
+Score = 50 (base) + TIMING_SCORE + PATTERN_SCORE + STATS_SCORE + BONUS/PENALITÀ
+
+---
+
+**A) TIMING SCORE (-25 a +25)**
+
+Confronta timing_strategia vs pattern_match:
+
+| Strategia Timing | Pattern Match | Score | Reasoning |
+|------------------|---------------|-------|-----------|
+| FIRST_HALF | FIRST_HALF | +25 | Timing perfetto |
+| FIRST_HALF | BALANCED | +10 | Accettabile se goalsFH > goalsSH |
+| FIRST_HALF | SECOND_HALF | -20 (CONS), -10 (MOD), -5 (AGG) | Disallineamento |
+| SECOND_HALF | SECOND_HALF | +25 | Timing perfetto |
+| SECOND_HALF | BALANCED | +10 | Accettabile se goalsSH > goalsFH |
+| SECOND_HALF | FIRST_HALF | -20 (CONS), -10 (MOD), -5 (AGG) | Disallineamento |
+| FULL_MATCH | ANY | +15 | Strategia flessibile |
+| LIVE_FLEXIBLE | ANY | +15 | Da valutare live |
+
+---
+
+**B) PATTERN SCORE (-20 a +20)**
+
+Se strategia ha campo \`requiredScoringPattern\`:
+
+| Pattern Richiesto | Pattern Match | Score |
+|-------------------|---------------|-------|
+| Stesso | Stesso | +20 |
+| FIRST_HALF | BALANCED | +8 (se goalsFH > goalsSH) |
+| SECOND_HALF | BALANCED | +8 (se goalsSH > goalsFH) |
+| ANY | Qualsiasi | +10 |
+| Opposto | Opposto | -15 (CONS), -8 (MOD), -3 (AGG) |
+
+---
+
+**C) STATISTICHE SCORE (-50 a +30)**
+
+**METODO RIGOROSO:**
+
+1. Per OGNI requisito in \`requiredPreMatchStats\`, verifica:
+
+\`\`\`
+SE valore_match >= valore_richiesto → ✅ PASS
+ALTRIMENTI → ❌ FAIL
+\`\`\`
+
+2. Conta quanti PASS vs FAIL:
+   - % soddisfatti = (PASS / TOTALE) * 100
+
+3. Applica punteggio base:
+   - 100% PASS: +15
+   - 80-99% PASS: +5 (AGG), 0 (MOD), -10 (CONS)
+   - 60-79% PASS: 0 (AGG), -10 (MOD), -20 (CONS)
+   - 40-59% PASS: -10 (AGG), -20 (MOD), -30 (CONS)
+   - 20-39% PASS: -20 (AGG), -30 (MOD), -40 (CONS)
+   - 0-19% PASS: -30 (AGG), -40 (MOD), -50 (CONS)
+
+4. **BONUS per superamento significativo:**
+   Se un requisito è superato di 2x o più:
+   - +5 per ogni requisito (max +15 totale)
+
+   Esempio: Richiesto goalsFH ≥ 3, Match ha 19 → 19/3 = 6.3x → +5 bonus
+
+5. **PENALITÀ CRITICA per requisiti fondamentali:**
+   - minAvgGoalsPerMatch FAIL: -10 (AGG), -15 (MOD), -20 (CONS)
+   - minXGFirstHalfAvg FAIL (se strategia FH): -5 (AGG), -10 (MOD), -15 (CONS)
+
+---
+
+**D) BONUS/PENALITÀ FINALI (-15 a +15)**
+
+- **Form eccellente** (entrambe >8/10): +10
+- **Form buona** (entrambe >6/10): +5
+- **Form scarsa** (una <4/10): -5
+- **Lega TOP** (Champions, Premier, Serie A, etc.): +5
+- **Gap qualitativo favorevole**: +5
+
+---
+
+**CALCOLO FINALE:**
+
+\`\`\`javascript
+Score = 50 + timing_score + pattern_score + stats_score + bonus_penalità
+
+// Cap tra 0-100
+Score = Math.max(0, Math.min(100, Score))
+\`\`\`
+
+═══════════════════════════════════════════════════════════════
+REASONING OBBLIGATORIO - FORMATO STANDARD
+═══════════════════════════════════════════════════════════════
+
+Il tuo reasoning DEVE seguire questa struttura:
+
+\`\`\`
+**TIMING ANALYSIS:**
+Strategia richiede: [FIRST_HALF/SECOND_HALF/etc]
+Match pattern: [FIRST_HALF/SECOND_HALF/BALANCED]
+→ [Allineato/Parzialmente allineato/Non allineato]
+→ Score timing: [+25/+10/-20/etc]
+
+**PATTERN ANALYSIS:**
+Pattern richiesto: [FIRST_HALF/SECOND_HALF/etc o "Nessuno specifico"]
+Pattern match: [FIRST_HALF/SECOND_HALF/BALANCED]
+→ [Corrisponde/Parziale/Non corrisponde]
+→ Score pattern: [+20/+8/-15/etc]
+
+**STATISTICHE PRE-MATCH:**
+Requisiti strategia:
+1. minXGFirstHalfAvg >= 0.8 | Match: 0.95 | ✅ PASS (+5 bonus: 0.95/0.8 = 1.19x)
+2. minGoalsFirstHalf >= 3 | Match: 19 | ✅ PASS (+5 bonus: 19/3 = 6.3x)
+3. minAvgGoalsPerMatch >= 2.0 | Match: 1.5 | ❌ FAIL
+
+Risultato: 2/3 requisiti soddisfatti = 66.7%
+Punteggio base statistiche: +5 (MODERATE, 60-79%)
+Bonus superamento: +10 (2 requisiti con 2x+)
+Penalità minAvgGoalsPerMatch: -15 (MODERATE)
+→ Score statistiche totale: +5 +10 -15 = 0
+
+**BONUS/PENALITÀ:**
+- Form casa: 8/10 (WWLWL) → +5
+- Form trasferta: 4/10 (WLLWL) → 0
+- Lega: UEFA Champions League → +5
+→ Score bonus: +10
+
+**CALCOLO FINALE:**
+50 (base) + 25 (timing) + 20 (pattern) + 0 (statistiche) + 10 (bonus) = 105
+→ Capped a 100
+→ **SCORE FINALE: 100**
+
+**MOTIVAZIONE STRATEGIA:**
+Perché questa strategia ha vinto:
+- Top 2-3 alternative con score
+- Punti di forza: timing, statistiche, pattern
+- Rischi/limitazioni (requisiti mancanti, pattern parziale)
+
+**CONSIGLI LIVE TRADING:**
+- Entry: minuto, quote target, condizioni
+- Exit: goal, tempo limite, quote, stop loss
+- Rischio: split staking, stop loss, take profit
+- Monitoraggio: momenti chiave, segnali +/- 
+- Piano B: alternative se cambia situazione
+
+**RACCOMANDAZIONE OPERATIVA:**
+[Riassunto pratico: entry, exit, staking]
+Es: "Over 0.5 FH: entry 10'-20' (1.80-2.00), exit al goal o 45', split 50% a 1.90/2.10"
+\`\`\`
+
+═══════════════════════════════════════════════════════════════
+REGOLE CRITICHE - NON VIOLARE MAI
+═══════════════════════════════════════════════════════════════
+
+1. **COERENZA:** "timing perfetto" → +25, "statistiche soddisfatte" → 100% PASS, "2/3 requisiti" → 66.7%
+
+2. **CALCOLO:** Mostra 50 + X + Y + Z = Risultato, verifica aritmetica, cap 0-100
+
+3. **NESSUNA NORMALIZZAZIONE:** Calcolo dà 48 → score 48, 105 → 100, -10 → 0
+
+4. **DATI MANCANTI:** Requisito non verificabile → FAIL, pattern indeterminato → BALANCED
+
+5. **AGGRESSIVITÀ:** CONSERVATIVE max 30 se non allineato, MODERATE bilanciato, AGGRESSIVE opportunista
+
+═══════════════════════════════════════════════════════════════
+
+Analizza strategie e match seguendo questo framework.`
         },
         {
           role: 'user',
@@ -109,6 +328,19 @@ Le raccomandazioni devono essere operative, con entry points, exit conditions e 
   // Processa risposta AI
   const matches: MatchAnalysis[] = aiResponse.matches || [];
   
+  // Valida reasoning per ogni match
+  matches.forEach(match => {
+    if (!validateReasoning(match.bestStrategy.reasoning)) {
+      console.warn(`⚠️ Reasoning incompleto per match ${match.matchId} (${match.homeTeam} vs ${match.awayTeam})`);
+    }
+    // Valida anche reasoning delle altre strategie
+    match.allScores?.forEach(score => {
+      if (!validateReasoning(score.reasoning)) {
+        console.warn(`⚠️ Reasoning incompleto per strategia ${score.strategyName} nel match ${match.matchId}`);
+      }
+    });
+  });
+  
   // Ordina per confidence e seleziona top 3-5
   const sortedMatches = [...matches].sort((a, b) => 
     b.bestStrategy.confidence - a.bestStrategy.confidence
@@ -126,6 +358,28 @@ Le raccomandazioni devono essere operative, con entry points, exit conditions e 
 }
 
 /**
+ * Valida che il reasoning contenga le sezioni obbligatorie
+ */
+function validateReasoning(reasoning: string): boolean {
+  if (!reasoning || reasoning.trim().length === 0) {
+    return false;
+  }
+  
+  const required = [
+    'TIMING ANALYSIS',
+    'PATTERN ANALYSIS',
+    'STATISTICHE PRE-MATCH',
+    'CALCOLO FINALE',
+    'MOTIVAZIONE STRATEGIA',
+    'CONSIGLI LIVE TRADING'
+  ];
+  
+  // Verifica che tutte le sezioni siano presenti (case insensitive)
+  const reasoningUpper = reasoning.toUpperCase();
+  return required.every(section => reasoningUpper.includes(section.toUpperCase()));
+}
+
+/**
  * Costruisce il prompt per OpenAI
  */
 function buildAnalysisPrompt(
@@ -134,13 +388,57 @@ function buildAnalysisPrompt(
 ): string {
   const strategiesText = strategies.map(s => {
     const parsed = s.parsedData || {};
+    const metadata = (parsed as any).strategyMetadata || {};
+    
+    // Costruisci sezione metadati strutturata
+    let metadataSection = '';
+    if (metadata.timing) {
+      metadataSection += `\nTIMING: ${metadata.timing}`;
+      const timingDesc = {
+        'FIRST_HALF': 'Strategia per primo tempo',
+        'SECOND_HALF': 'Strategia per secondo tempo',
+        'FULL_MATCH': 'Strategia per intera partita',
+        'LIVE_FLEXIBLE': 'Strategia live flessibile'
+      };
+      metadataSection += ` (${timingDesc[metadata.timing as keyof typeof timingDesc] || metadata.timing})`;
+    }
+    
+    if (metadata.requiredScoringPattern) {
+      metadataSection += `\nPATTERN RICHIESTO: ${metadata.requiredScoringPattern}`;
+    }
+    
+    metadataSection += `\nAGGRESSIVITÀ: ${metadata.aggressiveness || 'MODERATE'}`;
+    
+    if (metadata.requiredPreMatchStats) {
+      const stats = metadata.requiredPreMatchStats;
+      metadataSection += `\n\nSTATISTICHE PRE-MATCH MINIME RICHIESTE:`;
+      if (stats.minXGFirstHalfAvg !== undefined) metadataSection += `\n- xG primo tempo medio combinato: >= ${stats.minXGFirstHalfAvg}`;
+      if (stats.minGoalsFirstHalf !== undefined) metadataSection += `\n- Goal primo tempo (ultimi 5, combinati): >= ${stats.minGoalsFirstHalf}`;
+      if (stats.minGoalsSecondHalf !== undefined) metadataSection += `\n- Goal secondo tempo (ultimi 5, combinati): >= ${stats.minGoalsSecondHalf}`;
+      if (stats.minAvgGoalsPerMatch !== undefined) metadataSection += `\n- Media goal per partita: >= ${stats.minAvgGoalsPerMatch}`;
+      if (stats.minGoalsFHHome !== undefined) metadataSection += `\n- Goal primo tempo casa (ultimi 5): >= ${stats.minGoalsFHHome}`;
+      if (stats.minGoalsFHAway !== undefined) metadataSection += `\n- Goal primo tempo trasferta (ultimi 5): >= ${stats.minGoalsFHAway}`;
+      if (stats.minGoalsSHHome !== undefined) metadataSection += `\n- Goal secondo tempo casa (ultimi 5): >= ${stats.minGoalsSHHome}`;
+      if (stats.minGoalsSHAway !== undefined) metadataSection += `\n- Goal secondo tempo trasferta (ultimi 5): >= ${stats.minGoalsSHAway}`;
+    }
+    
+    if (metadata.howItWorks) {
+      metadataSection += `\n\nCOME FUNZIONA:\n${metadata.howItWorks}`;
+    }
+    
+    if (metadata.keyPoints) {
+      metadataSection += `\n\nPUNTI CHIAVE PER MATCHING:\n${metadata.keyPoints}`;
+    }
+    
     return `
 STRATEGIA ID: ${s.id}
 NOME: ${s.name}
 ${s.description ? `DESCRIZIONE: ${s.description}` : ''}
+${metadataSection ? `\n${metadataSection}` : ''}
+
 CONTENUTO COMPLETO:
 ${s.content}
-${s.parsedData ? `DATI STRUTTURATI: ${JSON.stringify(parsed, null, 2)}` : ''}
+${s.parsedData && Object.keys(parsed).length > 0 ? `\nDATI STRUTTURATI COMPLETI: ${JSON.stringify(parsed, null, 2)}` : ''}
 `;
   }).join('\n\n---\n\n');
 
@@ -187,31 +485,65 @@ STATISTICHE COMBINATE:
   }).join('\n\n==========\n\n');
 
   return `
-Analizza le seguenti partite di calcio e assegna per ciascuna la strategia di trading più adatta.
+Analizza ogni strategia e assegna score (0-100) basandoti sull'allineamento tra strategia e statistiche match.
 
-STRATEGIE DISPONIBILI:
+STRATEGIE:
 ${strategiesText}
 
-PARTITE CON STATISTICHE PRE-MATCH:
+PARTITE:
 ${matchesText}
 
-ISTRUZIONI DETTAGLIATE:
-1. Per OGNI partita, analizza TUTTE le strategie disponibili una per una
-2. Assegna un punteggio da 0 a 100 a ciascuna strategia basandoti su:
-   - Quanto le statistiche pre-match si allineano con i requisiti della strategia
-   - La pertinenza della strategia per questo tipo di match e queste squadre
-   - La qualità e affidabilità dei dati disponibili
-   - La probabilità di successo basata sui pattern storici
-3. Seleziona la strategia con punteggio più alto come "bestStrategy"
-4. La confidence del bestStrategy deve essere il punteggio più alto
-5. Fornisci un reasoning dettagliato e operativo per ogni punteggio, spiegando PERCHÉ quella strategia è adatta o meno
-6. Per il bestStrategy, fornisci un reasoning che includa:
-   - Perché questa strategia è la migliore
-   - Entry points suggeriti
-   - Exit conditions
-   - Gestione del rischio
+═══════════════════════════════════════════════════════════════
+METODOLOGIA DI SCORING
+═══════════════════════════════════════════════════════════════
 
-FORMATO RISPOSTA JSON (STRICTO):
+Per ogni strategia:
+1. Comprendi: cosa fa, quando si entra, pattern richiesto, requisiti statistici, punti chiave
+2. Analizza: confronta statistiche match con requisiti strategia, verifica timing e pattern
+3. Calcola score:
+
+BASE: 50 punti (strategia applicabile)
+
+TIMING (valori fissi):
+- ALLINEATO: strategia FIRST_HALF + pattern FIRST_HALF = +25 | strategia SECOND_HALF + pattern SECOND_HALF = +25
+- PARZIALE: FIRST_HALF + BALANCED ma goal FH alti = +10
+- NON ALLINEATO: FIRST_HALF + SECOND_HALF = -20
+- LIVE_FLEXIBLE: +15 buone, +5 moderate, -5 scarse
+
+PATTERN (valori fissi):
+- CORRISPONDE: pattern richiesto = combinato = +20
+- PARZIALE: FIRST_HALF + BALANCED ma goal FH > SH = +10
+- NON CORRISPONDE: pattern ≠ combinato = -15
+- ANY: +5 favorevole, 0 neutro
+
+STATISTICHE - Verifica ogni requisito:
+
+MAPPING: minXGFirstHalfAvg → xG primo tempo combinato | minGoalsFirstHalf → Goal primo tempo combinati | minGoalsSecondHalf → Goal secondo tempo combinati | minAvgGoalsPerMatch → Media goal | minGoalsFHHome → Goal primo tempo casa | minGoalsFHAway → Goal primo tempo trasferta | minGoalsSHHome → Goal secondo tempo casa | minGoalsSHAway → Goal secondo tempo trasferta
+
+PROCEDURA:
+1. Trova statistica corrispondente per ogni requisito
+2. Se presente: confronta valore_match >= valore_richiesto → ✅ o ❌
+3. Se mancante: ❌ NON VERIFICABILE (fondamentale = penalizza, secondario = escludi)
+4. Calcola % requisiti soddisfatti (solo verificabili)
+5. Applica punteggio:
+   - 100% = +15 | 80-99% = +10 | 50-79% = -5 | 20-49% = -20 | 1-19% = -30 | 0% = -35
+6. Penalità aggiuntive: minAvgGoalsPerMatch fallito = -15 | minXGFirstHalfAvg fallito = -10
+7. Nel reasoning: elenca ogni requisito con confronto, conteggio finale, calcolo completo
+
+PUNTI CHIAVE: Presenti e forti = +15 | Presenti = +10 | Assenti = 0
+
+CALCOLO: Base (50) + Timing + Pattern + Statistiche + Punti Chiave = risultato (cap 0-100)
+
+REGOLE:
+- >50% requisiti falliti: max 40
+- minAvgGoalsPerMatch fallito: max 35
+- Score oggettivo, aggressività NON modifica score (solo staking: CONSERVATIVE score>=60, MODERATE score>=80, AGGRESSIVE score>=90)
+- Reasoning coerente: mostra ogni confronto numerico, calcolo tracciabile
+
+ESEMPIO REASONING CORRETTO:
+"Timing: FIRST_HALF + pattern FIRST_HALF → ALLINEATO (+25). Pattern: richiesto FIRST_HALF = combinato FIRST_HALF → CORRISPONDE (+20). Statistiche: xG primo tempo 0.95 >= 0.70 → ✅, Goal primo tempo 19 >= 8 → ✅. 2/2 = 100% → +15. Punti chiave forti → +15. CALCOLO: 50+25+20+15+15 = 125 → 100 (cap). Score: 100."
+
+FORMATO JSON:
 {
   "matches": [
     {
@@ -221,34 +553,36 @@ FORMATO RISPOSTA JSON (STRICTO):
       "league": "UEFA Champions League",
       "time": "21:00",
       "bestStrategy": {
-        "strategyId": "uuid-strategia",
+        "strategyId": "uuid",
         "strategyName": "Over 0.5 First Half",
-        "confidence": 85,
-        "reasoning": "Entrambe le squadre segnano spesso nel primo tempo (Juventus 4 goal FH ultimi 5, Pafos 3 goal FH). Pattern combinato FIRST_HALF. Consiglio un ingresso sugli Over 1.5 primo tempo, entrando ad ogni mezzo punto di distanza, in caso di nessun goal alla mezz'ora uscire ed aprire un back sugli over 0.5 primo tempo."
+        "confidence": 100,
+        "reasoning": "[reasoning completo con calcolo]"
       },
       "allScores": [
         {
-          "strategyId": "uuid-1",
+          "strategyId": "uuid",
           "strategyName": "Over 0.5 FH",
-          "score": 85,
-          "reasoning": "Statistiche molto favorevoli: entrambe le squadre segnano spesso nel primo tempo..."
-        },
-        {
-          "strategyId": "uuid-2",
-          "strategyName": "BTTS",
-          "score": 60,
-          "reasoning": "Media goal combinata buona ma non eccezionale..."
+          "score": 100,
+          "reasoning": "[reasoning completo]"
         }
       ]
     }
   ]
 }
 
-IMPORTANTE: 
-- Restituisci SOLO JSON valido, senza testo aggiuntivo prima o dopo
-- Assicurati che tutti i matchId corrispondano a quelli nelle partite fornite
-- Assicurati che tutti gli strategyId corrispondano a quelli nelle strategie fornite
-- Il reasoning deve essere dettagliato e operativo
+Per ogni partita: 
+1. Analizza tutte le strategie disponibili
+2. Calcola score per ogni strategia usando il sistema sopra
+3. Seleziona bestStrategy (strategia con score più alto)
+4. Confidence del bestStrategy = suo score
+5. Nel reasoning del bestStrategy, DEVI includere OBBLIGATORIAMENTE:
+   - TIMING ANALYSIS
+   - PATTERN ANALYSIS
+   - STATISTICHE PRE-MATCH
+   - CALCOLO FINALE
+   - MOTIVAZIONE STRATEGIA (perché questa strategia ha vinto rispetto alle altre)
+   - CONSIGLI LIVE TRADING (entry, exit, gestione rischio, monitoraggio, piano B)
+   - RACCOMANDAZIONE OPERATIVA (riassunto breve)
 `;
 }
 
@@ -304,8 +638,50 @@ function generatePlanText(
     plan += `Statistiche combinate: media di ${safeNumber(stats.combined.avgGoalsPerMatch)} goal per partita, `;
     plan += `${stats.combined.goalsFirstHalf || 0} goal nel primo tempo e ${stats.combined.goalsSecondHalf || 0} nel secondo tempo negli ultimi 5 match combinati.\n\n`;
 
-    plan += `CONSIGLIO:\n`;
-    plan += `${matchAnalysis.bestStrategy.reasoning}\n\n`;
+    // Estrai sezioni dal reasoning
+    const reasoning = matchAnalysis.bestStrategy.reasoning;
+    
+    // Estrai MOTIVAZIONE STRATEGIA
+    const motivationMatch = reasoning.match(/\*\*MOTIVAZIONE STRATEGIA:\*\*([\s\S]*?)(?=\*\*|$)/i);
+    const motivationText = motivationMatch ? motivationMatch[1].trim() : null;
+    
+    // Estrai CONSIGLI LIVE TRADING
+    const liveMatch = reasoning.match(/\*\*CONSIGLI LIVE TRADING:\*\*([\s\S]*?)(?=\*\*|$)/i);
+    const liveText = liveMatch ? liveMatch[1].trim() : null;
+    
+    // Estrai RACCOMANDAZIONE OPERATIVA
+    const recommendationMatch = reasoning.match(/\*\*RACCOMANDAZIONE OPERATIVA:\*\*([\s\S]*?)(?=\*\*|$)/i);
+    const recommendationText = recommendationMatch ? recommendationMatch[1].trim() : null;
+    
+    // Mostra analisi tecnica (se presente, altrimenti tutto il reasoning)
+    const hasStructuredSections = motivationText || liveText || recommendationText;
+    
+    if (hasStructuredSections) {
+      // Mostra solo le sezioni tecniche (TIMING, PATTERN, STATISTICHE, CALCOLO)
+      const technicalSections = reasoning.match(/(\*\*TIMING ANALYSIS:\*\*[\s\S]*?\*\*CALCOLO FINALE:\*\*[\s\S]*?)(?=\*\*MOTIVAZIONE|\*\*CONSIGLI|\*\*RACCOMANDAZIONE|$)/i);
+      if (technicalSections) {
+        plan += `ANALISI TECNICA:\n${technicalSections[1].trim()}\n\n`;
+      }
+      
+      // Mostra MOTIVAZIONE STRATEGIA
+      if (motivationText) {
+        plan += `🎯 MOTIVAZIONE SCELTA:\n${motivationText}\n\n`;
+      }
+      
+      // Mostra CONSIGLI LIVE
+      if (liveText) {
+        plan += `⚡ CONSIGLI LIVE TRADING:\n${liveText}\n\n`;
+      }
+      
+      // Mostra RACCOMANDAZIONE OPERATIVA
+      if (recommendationText) {
+        plan += `📋 RACCOMANDAZIONE:\n${recommendationText}\n\n`;
+      }
+    } else {
+      // Fallback: mostra tutto il reasoning se non è strutturato
+      plan += `CONSIGLIO:\n${reasoning}\n\n`;
+    }
+    
     plan += `Strategia consigliata: ${matchAnalysis.bestStrategy.strategyName}\n`;
     plan += `Confidence: ${matchAnalysis.bestStrategy.confidence}%\n\n`;
 

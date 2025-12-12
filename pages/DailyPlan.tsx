@@ -22,6 +22,16 @@ const DailyPlan: React.FC = () => {
   const [todayPlan, setTodayPlan] = useState<TradingPlan | null>(null);
   const [planMatches, setPlanMatches] = useState<MatchAnalysis[]>([]);
   const [feedback, setFeedback] = useState<Record<string, PlanMatchFeedback>>({});
+  const [allFeedbackMatches, setAllFeedbackMatches] = useState<Array<{
+    matchIdentifier: string;
+    feedback: PlanMatchFeedback;
+    league?: string;
+    homeTeam?: string;
+    awayTeam?: string;
+    time?: string;
+    strategyName?: string;
+    confidence?: number;
+  }>>([]);
   const [error, setError] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 5; // Mostra 5 partite per pagina
@@ -71,17 +81,28 @@ const DailyPlan: React.FC = () => {
           setPlanMatches(planData.topMatches);
         }
 
-        // Carica feedback esistenti con paginazione se necessario
-        const { data: feedbackData, count: feedbackCount } = await supabase
+        // Carica TUTTI i feedback esistenti del piano, non solo quelli delle partite attuali
+        const { data: feedbackData } = await supabase
           .from('plan_match_feedback')
-          .select('*', { count: 'exact' })
+          .select('*')
           .eq('plan_id', data.id)
           .order('created_at', { ascending: false });
 
         if (feedbackData) {
           const feedbackMap: Record<string, PlanMatchFeedback> = {};
+          const feedbackMatches: Array<{
+            matchIdentifier: string;
+            feedback: PlanMatchFeedback;
+            league?: string;
+            homeTeam?: string;
+            awayTeam?: string;
+            time?: string;
+            strategyName?: string;
+            confidence?: number;
+          }> = [];
+
           feedbackData.forEach(f => {
-            feedbackMap[f.match_identifier] = {
+            const fb: PlanMatchFeedback = {
               matchIdentifier: f.match_identifier,
               recommendationText: f.recommendation_text || '',
               wasExecuted: f.was_executed || false,
@@ -89,8 +110,75 @@ const DailyPlan: React.FC = () => {
               actualResult: f.actual_result || undefined,
               feedbackNotes: f.feedback_notes || undefined
             };
+            feedbackMap[f.match_identifier] = fb;
+
+            // Estrai informazioni dalla match_identifier (formato: "League - HomeTeam vs AwayTeam")
+            const parts = f.match_identifier.split(' - ');
+            const league = parts[0] || '';
+            const teams = parts[1] || '';
+            const [homeTeam, awayTeam] = teams.split(' vs ');
+
+            // Cerca se questa partita è nel piano attuale per avere strategia e confidence
+            const currentMatch = planData?.topMatches?.find((m: MatchAnalysis) => 
+              `${m.league} - ${m.homeTeam} vs ${m.awayTeam}` === f.match_identifier
+            );
+
+            feedbackMatches.push({
+              matchIdentifier: f.match_identifier,
+              feedback: fb,
+              league,
+              homeTeam,
+              awayTeam,
+              time: currentMatch?.time,
+              strategyName: currentMatch?.bestStrategy?.strategyName,
+              confidence: currentMatch?.bestStrategy?.confidence
+            });
           });
+
+          // Aggiungi anche le partite attuali che non hanno ancora feedback
+          if (planData?.topMatches) {
+            planData.topMatches.forEach((m: MatchAnalysis) => {
+              const matchIdentifier = `${m.league} - ${m.homeTeam} vs ${m.awayTeam}`;
+              if (!feedbackMatches.find(fm => fm.matchIdentifier === matchIdentifier)) {
+                feedbackMatches.push({
+                  matchIdentifier,
+                  feedback: feedbackMap[matchIdentifier] || {
+                    matchIdentifier,
+                    recommendationText: m.bestStrategy.reasoning,
+                    wasExecuted: false
+                  },
+                  league: m.league,
+                  homeTeam: m.homeTeam,
+                  awayTeam: m.awayTeam,
+                  time: m.time,
+                  strategyName: m.bestStrategy.strategyName,
+                  confidence: m.bestStrategy.confidence
+                });
+              }
+            });
+          }
+          
           setFeedback(feedbackMap);
+          setAllFeedbackMatches(feedbackMatches);
+        } else {
+          // Se non ci sono feedback, inizializza con le partite attuali
+          if (planData?.topMatches) {
+            const initialMatches = planData.topMatches.map((m: MatchAnalysis) => ({
+              matchIdentifier: `${m.league} - ${m.homeTeam} vs ${m.awayTeam}`,
+              feedback: {
+                matchIdentifier: `${m.league} - ${m.homeTeam} vs ${m.awayTeam}`,
+                recommendationText: m.bestStrategy.reasoning,
+                wasExecuted: false
+              },
+              league: m.league,
+              homeTeam: m.homeTeam,
+              awayTeam: m.awayTeam,
+              time: m.time,
+              strategyName: m.bestStrategy.strategyName,
+              confidence: m.bestStrategy.confidence
+            }));
+            setAllFeedbackMatches(initialMatches);
+          }
         }
       }
     } catch (error: any) {
@@ -149,7 +237,7 @@ const DailyPlan: React.FC = () => {
       }
 
       // 3. Recupera strategie dal database
-      const { data: strategies, error: strategiesError } = await supabase
+      const { data: strategiesRaw, error: strategiesError } = await supabase
         .from('user_strategies')
         .select('*')
         .eq('user_id', user.id)
@@ -157,12 +245,18 @@ const DailyPlan: React.FC = () => {
 
       if (strategiesError) throw strategiesError;
 
-      if (!strategies || strategies.length === 0) {
+      if (!strategiesRaw || strategiesRaw.length === 0) {
         setError('Nessuna strategia attiva trovata. Crea almeno una strategia prima di generare un piano.');
         setGenerating(false);
         setLoading(false);
         return;
       }
+
+      // Mappa structured_data a parsedData per UserStrategy
+      const strategies = strategiesRaw.map((s: any) => ({
+        ...s,
+        parsedData: s.structured_data || null,
+      }));
 
       // 4. Genera piano con AI
       const generatedPlan = await generateDailyPlan(matchesWithStats, strategies);
@@ -246,18 +340,27 @@ const DailyPlan: React.FC = () => {
         const mappedPlan = mapSupabaseToTradingPlan(savedPlan);
         setTodayPlan(mappedPlan);
         
-        // Mantieni i feedback esistenti (non resettare, servono per memoria AI futura)
-        // I feedback rimangono nel database anche se rigeneri il piano
+        // Carica TUTTI i feedback esistenti (non solo quelli delle partite attuali)
         const { data: feedbackData } = await supabase
           .from('plan_match_feedback')
           .select('*')
           .eq('plan_id', savedPlan.id);
 
+        const feedbackMap: Record<string, PlanMatchFeedback> = {};
+        const feedbackMatches: Array<{
+          matchIdentifier: string;
+          feedback: PlanMatchFeedback;
+          league?: string;
+          homeTeam?: string;
+          awayTeam?: string;
+          time?: string;
+          strategyName?: string;
+          confidence?: number;
+        }> = [];
+
         if (feedbackData && feedbackData.length > 0) {
-          // Aggiungi i feedback esistenti senza sovrascrivere
-          const feedbackMap: Record<string, PlanMatchFeedback> = {};
           feedbackData.forEach(f => {
-            feedbackMap[f.match_identifier] = {
+            const fb: PlanMatchFeedback = {
               matchIdentifier: f.match_identifier,
               recommendationText: f.recommendation_text || '',
               wasExecuted: f.was_executed || false,
@@ -265,10 +368,56 @@ const DailyPlan: React.FC = () => {
               actualResult: f.actual_result || undefined,
               feedbackNotes: f.feedback_notes || undefined
             };
+            feedbackMap[f.match_identifier] = fb;
+
+            // Estrai informazioni dalla match_identifier
+            const parts = f.match_identifier.split(' - ');
+            const league = parts[0] || '';
+            const teams = parts[1] || '';
+            const [homeTeam, awayTeam] = teams.split(' vs ');
+
+            // Cerca se questa partita è nel nuovo piano per avere strategia e confidence
+            const currentMatch = generatedPlan.topMatches.find(m => 
+              `${m.league} - ${m.homeTeam} vs ${m.awayTeam}` === f.match_identifier
+            );
+
+            feedbackMatches.push({
+              matchIdentifier: f.match_identifier,
+              feedback: fb,
+              league,
+              homeTeam,
+              awayTeam,
+              time: currentMatch?.time,
+              strategyName: currentMatch?.bestStrategy?.strategyName,
+              confidence: currentMatch?.bestStrategy?.confidence
+            });
           });
-          // Merge con feedback esistenti nello state (non sovrascrive)
-          setFeedback(prev => ({ ...prev, ...feedbackMap }));
         }
+
+        // Aggiungi anche le nuove partite che non hanno ancora feedback
+        generatedPlan.topMatches.forEach(match => {
+          const matchIdentifier = `${match.league} - ${match.homeTeam} vs ${match.awayTeam}`;
+          if (!feedbackMatches.find(fm => fm.matchIdentifier === matchIdentifier)) {
+            feedbackMatches.push({
+              matchIdentifier,
+              feedback: feedbackMap[matchIdentifier] || {
+                matchIdentifier,
+                recommendationText: match.bestStrategy.reasoning,
+                wasExecuted: false
+              },
+              league: match.league,
+              homeTeam: match.homeTeam,
+              awayTeam: match.awayTeam,
+              time: match.time,
+              strategyName: match.bestStrategy.strategyName,
+              confidence: match.bestStrategy.confidence
+            });
+          }
+        });
+
+        // Merge con feedback esistenti nello state (non sovrascrive)
+        setFeedback(prev => ({ ...prev, ...feedbackMap }));
+        setAllFeedbackMatches(feedbackMatches);
       }
       setPlanMatches(generatedPlan.topMatches);
       setCurrentPage(1); // Reset alla prima pagina quando generi un nuovo piano
@@ -297,6 +446,39 @@ const DailyPlan: React.FC = () => {
 
     const updatedFeedback = { ...currentFeedback, ...updates };
     setFeedback(prev => ({ ...prev, [matchIdentifier]: updatedFeedback }));
+
+    // Aggiorna anche allFeedbackMatches
+    setAllFeedbackMatches(prev => {
+      const existingIndex = prev.findIndex(fm => fm.matchIdentifier === matchIdentifier);
+      if (existingIndex >= 0) {
+        const updated = [...prev];
+        updated[existingIndex] = {
+          ...updated[existingIndex],
+          feedback: updatedFeedback
+        };
+        return updated;
+      } else {
+        // Se non esiste, aggiungilo
+        const parts = matchIdentifier.split(' - ');
+        const league = parts[0] || '';
+        const teams = parts[1] || '';
+        const [homeTeam, awayTeam] = teams.split(' vs ');
+        const matchAnalysis = planMatches.find(m => 
+          `${m.league} - ${m.homeTeam} vs ${m.awayTeam}` === matchIdentifier
+        );
+        
+        return [...prev, {
+          matchIdentifier,
+          feedback: updatedFeedback,
+          league,
+          homeTeam,
+          awayTeam,
+          time: matchAnalysis?.time,
+          strategyName: matchAnalysis?.bestStrategy?.strategyName,
+          confidence: matchAnalysis?.bestStrategy?.confidence
+        }];
+      }
+    });
 
     try {
       // Cerca feedback esistente
@@ -434,45 +616,60 @@ const DailyPlan: React.FC = () => {
           <div className="space-y-4">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold text-white">Feedback Partite</h3>
-              {planMatches.length > itemsPerPage && (
+              {(allFeedbackMatches.length > 0 ? allFeedbackMatches.length : planMatches.length) > itemsPerPage && (
                 <div className="flex items-center gap-2 text-sm text-gray-400">
                   <span>
-                    Pagina {currentPage} di {Math.ceil(planMatches.length / itemsPerPage)}
+                    Pagina {currentPage} di {Math.ceil((allFeedbackMatches.length > 0 ? allFeedbackMatches.length : planMatches.length) / itemsPerPage)}
                   </span>
                 </div>
               )}
             </div>
             
-            {/* Partite paginate */}
-            {planMatches
-              .slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage)
-              .map((match) => {
-              const matchIdentifier = `${match.league} - ${match.homeTeam} vs ${match.awayTeam}`;
-              const matchFeedback = feedback[matchIdentifier] || {
-                matchIdentifier,
+            {/* Mostra TUTTI i feedback, non solo quelli delle partite attuali */}
+            {(allFeedbackMatches.length > 0 ? allFeedbackMatches : planMatches.map(match => ({
+              matchIdentifier: `${match.league} - ${match.homeTeam} vs ${match.awayTeam}`,
+              feedback: feedback[`${match.league} - ${match.homeTeam} vs ${match.awayTeam}`] || {
+                matchIdentifier: `${match.league} - ${match.homeTeam} vs ${match.awayTeam}`,
                 recommendationText: match.bestStrategy.reasoning,
                 wasExecuted: false
-              };
+              },
+              league: match.league,
+              homeTeam: match.homeTeam,
+              awayTeam: match.awayTeam,
+              time: match.time,
+              strategyName: match.bestStrategy.strategyName,
+              confidence: match.bestStrategy.confidence
+            })))
+              .slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage)
+              .map((item) => {
+              const matchIdentifier = item.matchIdentifier;
+              const matchFeedback = item.feedback;
 
               return (
                 <div
-                  key={match.matchId}
+                  key={matchIdentifier}
                   className="bg-background/50 rounded-lg p-4 border border-border"
                 >
                   <div className="flex items-start justify-between mb-4">
                     <div className="flex-1">
                       <h4 className="text-white font-semibold">
-                        {match.homeTeam} vs {match.awayTeam}
+                        {item.homeTeam || 'N/A'} vs {item.awayTeam || 'N/A'}
                       </h4>
-                      <p className="text-sm text-gray-400">{match.league} - {match.time}</p>
-                      <div className="mt-2 flex items-center gap-2">
-                        <span className="text-sm text-blue-400">
-                          Strategia: {match.bestStrategy.strategyName}
-                        </span>
-                        <span className="text-xs text-gray-500">
-                          (Confidence: {match.bestStrategy.confidence}%)
-                        </span>
-                      </div>
+                      <p className="text-sm text-gray-400">
+                        {item.league || 'N/A'} {item.time ? `- ${item.time}` : ''}
+                      </p>
+                      {item.strategyName && (
+                        <div className="mt-2 flex items-center gap-2">
+                          <span className="text-sm text-blue-400">
+                            Strategia: {item.strategyName}
+                          </span>
+                          {item.confidence !== undefined && (
+                            <span className="text-xs text-gray-500">
+                              (Confidence: {item.confidence}%)
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </div>
                     <div className="flex items-center gap-2">
                       {matchFeedback.wasExecuted ? (
@@ -537,6 +734,24 @@ const DailyPlan: React.FC = () => {
                           </select>
                         </div>
 
+                        {/* Campo per il risultato effettivo della partita */}
+                        <div>
+                          <label className="block text-sm text-gray-300 mb-1">
+                            Risultato effettivo (es. 2-1, 0-0):
+                          </label>
+                          <input
+                            type="text"
+                            value={matchFeedback.actualResult || ''}
+                            onChange={(e) =>
+                              handleFeedbackUpdate(matchIdentifier, {
+                                actualResult: e.target.value
+                              })
+                            }
+                            placeholder="es. 2-1, 0-0, 3-2..."
+                            className="w-full bg-background border border-border rounded px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          />
+                        </div>
+
                         <div>
                           <label className="block text-sm text-gray-300 mb-1">
                             Note (opzionale):
@@ -561,7 +776,7 @@ const DailyPlan: React.FC = () => {
             })}
             
             {/* Controlli Paginazione */}
-            {planMatches.length > itemsPerPage && (
+            {(allFeedbackMatches.length > 0 ? allFeedbackMatches.length : planMatches.length) > itemsPerPage && (
               <div className="flex items-center justify-center gap-4 pt-4 border-t border-border/50">
                 <button
                   onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
@@ -572,7 +787,7 @@ const DailyPlan: React.FC = () => {
                   Precedente
                 </button>
                 <div className="flex items-center gap-2">
-                  {Array.from({ length: Math.ceil(planMatches.length / itemsPerPage) }, (_, i) => i + 1).map(page => (
+                  {Array.from({ length: Math.ceil((allFeedbackMatches.length > 0 ? allFeedbackMatches.length : planMatches.length) / itemsPerPage) }, (_, i) => i + 1).map(page => (
                     <button
                       key={page}
                       onClick={() => setCurrentPage(page)}
@@ -587,8 +802,8 @@ const DailyPlan: React.FC = () => {
                   ))}
                 </div>
                 <button
-                  onClick={() => setCurrentPage(prev => Math.min(Math.ceil(planMatches.length / itemsPerPage), prev + 1))}
-                  disabled={currentPage === Math.ceil(planMatches.length / itemsPerPage)}
+                  onClick={() => setCurrentPage(prev => Math.min(Math.ceil((allFeedbackMatches.length > 0 ? allFeedbackMatches.length : planMatches.length) / itemsPerPage), prev + 1))}
+                  disabled={currentPage === Math.ceil((allFeedbackMatches.length > 0 ? allFeedbackMatches.length : planMatches.length) / itemsPerPage)}
                   className="flex items-center gap-2 px-4 py-2 bg-background border border-border rounded-lg text-white disabled:opacity-50 disabled:cursor-not-allowed hover:bg-background/80 transition-colors"
                 >
                   Successiva

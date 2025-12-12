@@ -138,6 +138,37 @@ export interface StrategyFilter {
 export interface ParsedStrategyData {
   name: string;
   description?: string;
+  
+  // Metadati strategia per AI
+  strategyMetadata?: {
+    // Quando applicare la strategia
+    timing: 'FIRST_HALF' | 'SECOND_HALF' | 'FULL_MATCH' | 'LIVE_FLEXIBLE';
+    
+    // Pattern di segnatura richiesto
+    requiredScoringPattern?: 'FIRST_HALF' | 'SECOND_HALF' | 'BALANCED' | 'ANY';
+    
+    // Livello di aggressività
+    aggressiveness: 'CONSERVATIVE' | 'MODERATE' | 'AGGRESSIVE';
+    
+    // Statistiche pre-match richieste (con valori numerici)
+    requiredPreMatchStats?: {
+      minXGFirstHalfAvg?: number; // xG medio primo tempo minimo combinato
+      minGoalsFirstHalf?: number; // Goal minimi primo tempo (ultimi 5 match combinati)
+      minGoalsSecondHalf?: number; // Goal minimi secondo tempo (ultimi 5 match combinati)
+      minAvgGoalsPerMatch?: number; // Media goal per partita minima
+      minGoalsFHHome?: number; // Goal primo tempo squadra casa (ultimi 5)
+      minGoalsFHAway?: number; // Goal primo tempo squadra trasferta (ultimi 5)
+      minGoalsSHHome?: number; // Goal secondo tempo squadra casa (ultimi 5)
+      minGoalsSHAway?: number; // Goal secondo tempo squadra trasferta (ultimi 5)
+    };
+    
+    // Come funziona la strategia (descrizione operativa)
+    howItWorks?: string;
+    
+    // Punti chiave per il matching
+    keyPoints?: string;
+  };
+  
   entryConditions?: {
     odds?: {
       optimalRange?: string;

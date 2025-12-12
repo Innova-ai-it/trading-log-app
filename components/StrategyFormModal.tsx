@@ -6,6 +6,23 @@ import { useAuth } from '../contexts/AuthContext';
 interface StrategyFormData {
   name: string;
   description: string;
+  strategyMetadata: {
+    timing: 'FIRST_HALF' | 'SECOND_HALF' | 'FULL_MATCH' | 'LIVE_FLEXIBLE';
+    requiredScoringPattern?: 'FIRST_HALF' | 'SECOND_HALF' | 'BALANCED' | 'ANY';
+    aggressiveness: 'CONSERVATIVE' | 'MODERATE' | 'AGGRESSIVE';
+    requiredPreMatchStats: {
+      minXGFirstHalfAvg?: string;
+      minGoalsFirstHalf?: string;
+      minGoalsSecondHalf?: string;
+      minAvgGoalsPerMatch?: string;
+      minGoalsFHHome?: string;
+      minGoalsFHAway?: string;
+      minGoalsSHHome?: string;
+      minGoalsSHAway?: string;
+    };
+    howItWorks: string;
+    keyPoints: string;
+  };
   entryConditions: {
     odds: {
       optimalRange: string;
@@ -60,6 +77,14 @@ interface StrategyFormModalProps {
 const emptyFormData: StrategyFormData = {
   name: '',
   description: '',
+  strategyMetadata: {
+    timing: 'LIVE_FLEXIBLE',
+    requiredScoringPattern: 'ANY',
+    aggressiveness: 'MODERATE',
+    requiredPreMatchStats: {},
+    howItWorks: '',
+    keyPoints: '',
+  },
   entryConditions: {
     odds: {
       optimalRange: '',
@@ -121,6 +146,33 @@ export const StrategyFormModal: React.FC<StrategyFormModalProps> = ({
       const descMatch = content.match(/## Descrizione\n([\s\S]*?)(?=\n##|$)/);
       if (descMatch) {
         setFormData(prev => ({ ...prev, description: descMatch[1].trim() }));
+      }
+
+      // Extract strategy metadata from parsedData if available
+      // Try to get from database first (if strategy was saved with metadata)
+      const parsedData = (editStrategy as any).parsedData || (editStrategy as any).structured_data;
+      if (parsedData?.strategyMetadata) {
+        const meta = parsedData.strategyMetadata;
+        setFormData(prev => ({
+          ...prev,
+          strategyMetadata: {
+            timing: meta.timing || 'LIVE_FLEXIBLE',
+            requiredScoringPattern: meta.requiredScoringPattern || 'ANY',
+            aggressiveness: meta.aggressiveness || 'MODERATE',
+            requiredPreMatchStats: {
+              minXGFirstHalfAvg: meta.requiredPreMatchStats?.minXGFirstHalfAvg?.toString() || '',
+              minGoalsFirstHalf: meta.requiredPreMatchStats?.minGoalsFirstHalf?.toString() || '',
+              minGoalsSecondHalf: meta.requiredPreMatchStats?.minGoalsSecondHalf?.toString() || '',
+              minAvgGoalsPerMatch: meta.requiredPreMatchStats?.minAvgGoalsPerMatch?.toString() || '',
+              minGoalsFHHome: meta.requiredPreMatchStats?.minGoalsFHHome?.toString() || '',
+              minGoalsFHAway: meta.requiredPreMatchStats?.minGoalsFHAway?.toString() || '',
+              minGoalsSHHome: meta.requiredPreMatchStats?.minGoalsSHHome?.toString() || '',
+              minGoalsSHAway: meta.requiredPreMatchStats?.minGoalsSHAway?.toString() || '',
+            },
+            howItWorks: meta.howItWorks || '',
+            keyPoints: meta.keyPoints || '',
+          }
+        }));
       }
 
       // Extract entry conditions - odds
@@ -290,9 +342,33 @@ ${data.notes || 'Nessuna nota aggiuntiva.'}`;
   };
 
   const generateStructuredData = (data: StrategyFormData) => {
+    // Converti stringhe numeriche in numeri per le statistiche
+    const parseNumber = (val: string | undefined): number | undefined => {
+      if (!val || val.trim() === '') return undefined;
+      const num = parseFloat(val);
+      return isNaN(num) ? undefined : num;
+    };
+
     return {
       name: data.name,
       description: data.description,
+      strategyMetadata: {
+        timing: data.strategyMetadata.timing,
+        requiredScoringPattern: data.strategyMetadata.requiredScoringPattern || undefined,
+        aggressiveness: data.strategyMetadata.aggressiveness,
+        requiredPreMatchStats: {
+          minXGFirstHalfAvg: parseNumber(data.strategyMetadata.requiredPreMatchStats.minXGFirstHalfAvg),
+          minGoalsFirstHalf: parseNumber(data.strategyMetadata.requiredPreMatchStats.minGoalsFirstHalf),
+          minGoalsSecondHalf: parseNumber(data.strategyMetadata.requiredPreMatchStats.minGoalsSecondHalf),
+          minAvgGoalsPerMatch: parseNumber(data.strategyMetadata.requiredPreMatchStats.minAvgGoalsPerMatch),
+          minGoalsFHHome: parseNumber(data.strategyMetadata.requiredPreMatchStats.minGoalsFHHome),
+          minGoalsFHAway: parseNumber(data.strategyMetadata.requiredPreMatchStats.minGoalsFHAway),
+          minGoalsSHHome: parseNumber(data.strategyMetadata.requiredPreMatchStats.minGoalsSHHome),
+          minGoalsSHAway: parseNumber(data.strategyMetadata.requiredPreMatchStats.minGoalsSHAway),
+        },
+        howItWorks: data.strategyMetadata.howItWorks || undefined,
+        keyPoints: data.strategyMetadata.keyPoints || undefined,
+      },
       entryConditions: {
         odds: {
           optimalRange: data.entryConditions.odds.optimalRange || null,
@@ -461,6 +537,190 @@ ${data.notes || 'Nessuna nota aggiuntiva.'}`;
               value={formData.description}
               onChange={(e) => handleChange('description', e.target.value)}
             />
+          </div>
+
+          {/* Metadati Strategia per AI */}
+          <div className="bg-blue-500/10 border border-blue-500/30 p-4 rounded-lg">
+            <h3 className="text-lg font-semibold text-white mb-2">
+              ⚙️ Metadati Strategia (per AI)
+            </h3>
+            <p className="text-sm text-gray-400 mb-4">
+              Questi campi aiutano l'AI a comprendere meglio quando e come applicare questa strategia
+            </p>
+            
+            <div className="space-y-4">
+              {/* Timing */}
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-gray-300">
+                  Quando applicare *
+                </label>
+                <select
+                  required
+                  className="w-full bg-background border border-border rounded-lg p-3 text-white focus:ring-2 focus:ring-primary outline-none"
+                  value={formData.strategyMetadata.timing}
+                  onChange={(e) => handleChange('strategyMetadata.timing', e.target.value as any)}
+                >
+                  <option value="FIRST_HALF">Primo Tempo</option>
+                  <option value="SECOND_HALF">Secondo Tempo</option>
+                  <option value="FULL_MATCH">Intera Partita</option>
+                  <option value="LIVE_FLEXIBLE">Live Flessibile</option>
+                </select>
+              </div>
+              
+              {/* Pattern di segnatura */}
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-gray-300">
+                  Pattern di segnatura richiesto
+                </label>
+                <select
+                  className="w-full bg-background border border-border rounded-lg p-3 text-white focus:ring-2 focus:ring-primary outline-none"
+                  value={formData.strategyMetadata.requiredScoringPattern || 'ANY'}
+                  onChange={(e) => handleChange('strategyMetadata.requiredScoringPattern', e.target.value as any)}
+                >
+                  <option value="ANY">Qualsiasi</option>
+                  <option value="FIRST_HALF">Primo Tempo</option>
+                  <option value="SECOND_HALF">Secondo Tempo</option>
+                  <option value="BALANCED">Bilanciato</option>
+                </select>
+              </div>
+              
+              {/* Aggressività */}
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-gray-300">
+                  Livello di aggressività *
+                </label>
+                <select
+                  required
+                  className="w-full bg-background border border-border rounded-lg p-3 text-white focus:ring-2 focus:ring-primary outline-none"
+                  value={formData.strategyMetadata.aggressiveness}
+                  onChange={(e) => handleChange('strategyMetadata.aggressiveness', e.target.value as any)}
+                >
+                  <option value="CONSERVATIVE">Conservativa</option>
+                  <option value="MODERATE">Media</option>
+                  <option value="AGGRESSIVE">Aggressiva</option>
+                </select>
+              </div>
+              
+              {/* Statistiche pre-match richieste */}
+              <div className="bg-background/50 p-3 rounded-lg">
+                <h4 className="text-sm font-semibold text-white mb-3">
+                  Statistiche Pre-Match Minime Richieste
+                </h4>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-xs text-gray-400">xG Primo Tempo Medio (combinato)</label>
+                    <input
+                      type="number"
+                      step="0.1"
+                      className="w-full bg-background border border-border rounded p-2 text-white text-sm focus:ring-2 focus:ring-primary outline-none"
+                      placeholder="es. 0.7"
+                      value={formData.strategyMetadata.requiredPreMatchStats.minXGFirstHalfAvg || ''}
+                      onChange={(e) => handleChange('strategyMetadata.requiredPreMatchStats.minXGFirstHalfAvg', e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs text-gray-400">Goal Primo Tempo (ultimi 5, combinati)</label>
+                    <input
+                      type="number"
+                      className="w-full bg-background border border-border rounded p-2 text-white text-sm focus:ring-2 focus:ring-primary outline-none"
+                      placeholder="es. 8"
+                      value={formData.strategyMetadata.requiredPreMatchStats.minGoalsFirstHalf || ''}
+                      onChange={(e) => handleChange('strategyMetadata.requiredPreMatchStats.minGoalsFirstHalf', e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs text-gray-400">Goal Secondo Tempo (ultimi 5, combinati)</label>
+                    <input
+                      type="number"
+                      className="w-full bg-background border border-border rounded p-2 text-white text-sm focus:ring-2 focus:ring-primary outline-none"
+                      placeholder="es. 10"
+                      value={formData.strategyMetadata.requiredPreMatchStats.minGoalsSecondHalf || ''}
+                      onChange={(e) => handleChange('strategyMetadata.requiredPreMatchStats.minGoalsSecondHalf', e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs text-gray-400">Media Goal per Partita</label>
+                    <input
+                      type="number"
+                      step="0.1"
+                      className="w-full bg-background border border-border rounded p-2 text-white text-sm focus:ring-2 focus:ring-primary outline-none"
+                      placeholder="es. 2.5"
+                      value={formData.strategyMetadata.requiredPreMatchStats.minAvgGoalsPerMatch || ''}
+                      onChange={(e) => handleChange('strategyMetadata.requiredPreMatchStats.minAvgGoalsPerMatch', e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs text-gray-400">Goal Primo Tempo Casa (ultimi 5)</label>
+                    <input
+                      type="number"
+                      className="w-full bg-background border border-border rounded p-2 text-white text-sm focus:ring-2 focus:ring-primary outline-none"
+                      placeholder="es. 4"
+                      value={formData.strategyMetadata.requiredPreMatchStats.minGoalsFHHome || ''}
+                      onChange={(e) => handleChange('strategyMetadata.requiredPreMatchStats.minGoalsFHHome', e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs text-gray-400">Goal Primo Tempo Trasferta (ultimi 5)</label>
+                    <input
+                      type="number"
+                      className="w-full bg-background border border-border rounded p-2 text-white text-sm focus:ring-2 focus:ring-primary outline-none"
+                      placeholder="es. 3"
+                      value={formData.strategyMetadata.requiredPreMatchStats.minGoalsFHAway || ''}
+                      onChange={(e) => handleChange('strategyMetadata.requiredPreMatchStats.minGoalsFHAway', e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs text-gray-400">Goal Secondo Tempo Casa (ultimi 5)</label>
+                    <input
+                      type="number"
+                      className="w-full bg-background border border-border rounded p-2 text-white text-sm focus:ring-2 focus:ring-primary outline-none"
+                      placeholder="es. 5"
+                      value={formData.strategyMetadata.requiredPreMatchStats.minGoalsSHHome || ''}
+                      onChange={(e) => handleChange('strategyMetadata.requiredPreMatchStats.minGoalsSHHome', e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs text-gray-400">Goal Secondo Tempo Trasferta (ultimi 5)</label>
+                    <input
+                      type="number"
+                      className="w-full bg-background border border-border rounded p-2 text-white text-sm focus:ring-2 focus:ring-primary outline-none"
+                      placeholder="es. 6"
+                      value={formData.strategyMetadata.requiredPreMatchStats.minGoalsSHAway || ''}
+                      onChange={(e) => handleChange('strategyMetadata.requiredPreMatchStats.minGoalsSHAway', e.target.value)}
+                    />
+                  </div>
+                </div>
+              </div>
+              
+              {/* Come funziona */}
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-gray-300">
+                  Come funziona la strategia *
+                </label>
+                <textarea
+                  required
+                  rows={3}
+                  className="w-full bg-background border border-border rounded-lg p-3 text-white focus:ring-2 focus:ring-primary outline-none resize-none"
+                  placeholder="Descrivi in modo operativo come funziona questa strategia..."
+                  value={formData.strategyMetadata.howItWorks}
+                  onChange={(e) => handleChange('strategyMetadata.howItWorks', e.target.value)}
+                />
+              </div>
+              
+              {/* Punti chiave */}
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-gray-300">
+                  Punti chiave per il matching
+                </label>
+                <textarea
+                  rows={2}
+                  className="w-full bg-background border border-border rounded-lg p-3 text-white focus:ring-2 focus:ring-primary outline-none resize-none"
+                  placeholder="Cosa deve cercare l'AI quando valuta questa strategia? (es. 'Alta frequenza goal secondo tempo', 'Pattern FIRST_HALF forte')"
+                  value={formData.strategyMetadata.keyPoints}
+                  onChange={(e) => handleChange('strategyMetadata.keyPoints', e.target.value)}
+                />
+              </div>
+            </div>
           </div>
 
           {/* Condizioni Entry - Quote */}
