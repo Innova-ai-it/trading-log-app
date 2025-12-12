@@ -16,6 +16,11 @@ export interface MatchPreMatchStats {
     scoringPattern: 'FIRST_HALF' | 'SECOND_HALF' | 'BALANCED';
     form: string[]; // Ultimi 5 risultati (W/D/L)
     xGFirstHalfAvg: number;
+    // Nuovi dati
+    position?: number; // Posizione in classifica
+    points?: number; // Punti in classifica
+    goalDifference?: number; // Differenza reti
+    injuries?: string[]; // Lista infortuni/squalifiche
   };
   awayTeam: {
     name: string;
@@ -27,6 +32,11 @@ export interface MatchPreMatchStats {
     scoringPattern: 'FIRST_HALF' | 'SECOND_HALF' | 'BALANCED';
     form: string[];
     xGFirstHalfAvg: number;
+    // Nuovi dati
+    position?: number;
+    points?: number;
+    goalDifference?: number;
+    injuries?: string[];
   };
   match: {
     id: number;
@@ -42,6 +52,43 @@ export interface MatchPreMatchStats {
     goalsSecondHalf: number;
     scoringPattern: 'FIRST_HALF' | 'SECOND_HALF' | 'BALANCED';
     xGFirstHalfAvg: number;
+  };
+  // Nuovi dati aggiuntivi
+  headToHead?: {
+    totalMatches: number;
+    homeWins: number;
+    draws: number;
+    awayWins: number;
+    homeAvgGoals: number;
+    awayAvgGoals: number;
+    recentMatches: Array<{
+      date: string;
+      homeScore: number;
+      awayScore: number;
+      result: string; // "W", "D", "L" per home team
+    }>;
+  };
+  odds?: {
+    home: number;
+    draw: number;
+    away: number;
+    over25: number;
+    under25: number;
+    btts: number;
+  };
+  predictions?: {
+    winner?: {
+      id: number;
+      name: string;
+      comment: string;
+    };
+    under_over?: string; // "over 2.5" o "under 2.5"
+    goals?: {
+      home: number;
+      away: number;
+    };
+    btts?: boolean;
+    advice?: string;
   };
 }
 
@@ -177,6 +224,27 @@ export async function fetchPreMatchStats(match: TodayMatch): Promise<MatchPreMat
     fetchTeamSeasonStats(match.teams.away.id, match.league.id, currentSeason, apiKey)
   ]);
 
+  // Recupera dati aggiuntivi in parallelo (con fallback se falliscono)
+  const [standings, h2h, injuries, odds, predictions] = await Promise.allSettled([
+    fetchStandings(match.league.id, currentSeason, apiKey),
+    fetchHeadToHead(match.teams.home.id, match.teams.away.id, apiKey),
+    fetchInjuries(match.teams.home.id, match.teams.away.id, apiKey),
+    fetchOdds(match.fixture.id, apiKey),
+    fetchPredictions(match.fixture.id, apiKey)
+  ]);
+
+  // Estrai dati standings per home e away
+  const homeStanding = standings.status === 'fulfilled' 
+    ? standings.value.find((s: any) => s.team.id === match.teams.home.id)
+    : null;
+  const awayStanding = standings.status === 'fulfilled'
+    ? standings.value.find((s: any) => s.team.id === match.teams.away.id)
+    : null;
+
+  // Estrai infortuni
+  const homeInjuries = injuries.status === 'fulfilled' ? injuries.value.home : [];
+  const awayInjuries = injuries.status === 'fulfilled' ? injuries.value.away : [];
+
   // Calcola statistiche combinate
   const combinedGoalsFH = homeTeamStats.goalsFH + awayTeamStats.goalsFH;
   const combinedGoalsSH = homeTeamStats.goalsSH + awayTeamStats.goalsSH;
@@ -188,12 +256,20 @@ export async function fetchPreMatchStats(match: TodayMatch): Promise<MatchPreMat
     homeTeam: {
       name: match.teams.home.name,
       id: match.teams.home.id,
-      ...homeTeamStats
+      ...homeTeamStats,
+      position: homeStanding?.rank,
+      points: homeStanding?.points,
+      goalDifference: homeStanding?.goalsDiff,
+      injuries: homeInjuries
     },
     awayTeam: {
       name: match.teams.away.name,
       id: match.teams.away.id,
-      ...awayTeamStats
+      ...awayTeamStats,
+      position: awayStanding?.rank,
+      points: awayStanding?.points,
+      goalDifference: awayStanding?.goalsDiff,
+      injuries: awayInjuries
     },
     match: {
       id: match.fixture.id,
@@ -209,7 +285,10 @@ export async function fetchPreMatchStats(match: TodayMatch): Promise<MatchPreMat
       goalsSecondHalf: combinedGoalsSH,
       scoringPattern,
       xGFirstHalfAvg: (homeTeamStats.xGFirstHalfAvg + awayTeamStats.xGFirstHalfAvg) / 2
-    }
+    },
+    headToHead: h2h.status === 'fulfilled' ? h2h.value : undefined,
+    odds: odds.status === 'fulfilled' ? odds.value : undefined,
+    predictions: predictions.status === 'fulfilled' ? predictions.value : undefined
   };
 }
 
@@ -371,5 +450,259 @@ function getDefaultTeamStats() {
     form: ['W', 'D', 'L', 'W', 'D'],
     xGFirstHalfAvg: 0.6
   };
+}
+
+/**
+ * Recupera la classifica della lega
+ */
+async function fetchStandings(leagueId: number, season: number, apiKey: string): Promise<any[]> {
+  try {
+    const url = `https://api-football-v1.p.rapidapi.com/v3/standings?league=${leagueId}&season=${season}`;
+    const response = await fetch(url, {
+      headers: {
+        'X-RapidAPI-Key': apiKey,
+        'X-RapidAPI-Host': 'api-football-v1.p.rapidapi.com'
+      }
+    });
+
+    if (!response.ok) {
+      console.warn(`⚠️ Errore standings (${response.status})`);
+      return [];
+    }
+
+    const data = await response.json();
+    if (data.response && data.response[0]?.league?.standings?.[0]) {
+      return data.response[0].league.standings[0];
+    }
+    return [];
+  } catch (error) {
+    console.error('Errore recupero standings:', error);
+    return [];
+  }
+}
+
+/**
+ * Recupera Head to Head (storico confronti diretti)
+ */
+async function fetchHeadToHead(homeId: number, awayId: number, apiKey: string) {
+  try {
+    const url = `https://api-football-v1.p.rapidapi.com/v3/fixtures/headtohead?h2h=${homeId}-${awayId}`;
+    const response = await fetch(url, {
+      headers: {
+        'X-RapidAPI-Key': apiKey,
+        'X-RapidAPI-Host': 'api-football-v1.p.rapidapi.com'
+      }
+    });
+
+    if (!response.ok) {
+      console.warn(`⚠️ Errore H2H (${response.status})`);
+      return undefined;
+    }
+
+    const data = await response.json();
+    if (!data.response || !Array.isArray(data.response) || data.response.length === 0) {
+      return undefined;
+    }
+
+    // Prendi ultimi 5 match
+    const recentMatches = data.response.slice(0, 5);
+    let homeWins = 0;
+    let draws = 0;
+    let awayWins = 0;
+    let homeGoals = 0;
+    let awayGoals = 0;
+
+    const h2hMatches = recentMatches.map((match: any) => {
+      const homeScore = match.goals?.home || 0;
+      const awayScore = match.goals?.away || 0;
+      homeGoals += homeScore;
+      awayGoals += awayScore;
+
+      let result = 'D';
+      if (homeScore > awayScore) {
+        homeWins++;
+        result = 'W';
+      } else if (awayScore > homeScore) {
+        awayWins++;
+        result = 'L';
+      } else {
+        draws++;
+      }
+
+      return {
+        date: match.fixture?.date || '',
+        homeScore,
+        awayScore,
+        result
+      };
+    });
+
+    return {
+      totalMatches: recentMatches.length,
+      homeWins,
+      draws,
+      awayWins,
+      homeAvgGoals: recentMatches.length > 0 ? homeGoals / recentMatches.length : 0,
+      awayAvgGoals: recentMatches.length > 0 ? awayGoals / recentMatches.length : 0,
+      recentMatches: h2hMatches
+    };
+  } catch (error) {
+    console.error('Errore recupero H2H:', error);
+    return undefined;
+  }
+}
+
+/**
+ * Recupera infortuni e squalifiche per entrambe le squadre
+ */
+async function fetchInjuries(homeId: number, awayId: number, apiKey: string) {
+  try {
+    const [homeResponse, awayResponse] = await Promise.all([
+      fetch(`https://api-football-v1.p.rapidapi.com/v3/injuries?team=${homeId}`, {
+        headers: {
+          'X-RapidAPI-Key': apiKey,
+          'X-RapidAPI-Host': 'api-football-v1.p.rapidapi.com'
+        }
+      }),
+      fetch(`https://api-football-v1.p.rapidapi.com/v3/injuries?team=${awayId}`, {
+        headers: {
+          'X-RapidAPI-Key': apiKey,
+          'X-RapidAPI-Host': 'api-football-v1.p.rapidapi.com'
+        }
+      })
+    ]);
+
+    const homeInjuries: string[] = [];
+    const awayInjuries: string[] = [];
+
+    if (homeResponse.ok) {
+      const homeData = await homeResponse.json();
+      if (homeData.response && Array.isArray(homeData.response)) {
+        homeData.response.forEach((injury: any) => {
+          if (injury.player?.name && injury.player?.reason) {
+            homeInjuries.push(`${injury.player.name} (${injury.player.reason})`);
+          }
+        });
+      }
+    }
+
+    if (awayResponse.ok) {
+      const awayData = await awayResponse.json();
+      if (awayData.response && Array.isArray(awayData.response)) {
+        awayData.response.forEach((injury: any) => {
+          if (injury.player?.name && injury.player?.reason) {
+            awayInjuries.push(`${injury.player.name} (${injury.player.reason})`);
+          }
+        });
+      }
+    }
+
+    return { home: homeInjuries, away: awayInjuries };
+  } catch (error) {
+    console.error('Errore recupero infortuni:', error);
+    return { home: [], away: [] };
+  }
+}
+
+/**
+ * Recupera quote pre-partita
+ */
+async function fetchOdds(fixtureId: number, apiKey: string) {
+  try {
+    const url = `https://api-football-v1.p.rapidapi.com/v3/odds?fixture=${fixtureId}`;
+    const response = await fetch(url, {
+      headers: {
+        'X-RapidAPI-Key': apiKey,
+        'X-RapidAPI-Host': 'api-football-v1.p.rapidapi.com'
+      }
+    });
+
+    if (!response.ok) {
+      console.warn(`⚠️ Errore odds (${response.status})`);
+      return undefined;
+    }
+
+    const data = await response.json();
+    if (!data.response || !Array.isArray(data.response) || data.response.length === 0) {
+      return undefined;
+    }
+
+    // Prendi il primo bookmaker (di solito il più affidabile)
+    const bookmaker = data.response[0]?.bookmakers?.[0];
+    if (!bookmaker) {
+      return undefined;
+    }
+
+    const odds: any = {};
+    bookmaker.bets?.forEach((bet: any) => {
+      if (bet.id === 1) { // Match Winner (1X2)
+        bet.values?.forEach((value: any) => {
+          if (value.value === 'Home') odds.home = parseFloat(value.odd);
+          if (value.value === 'Draw') odds.draw = parseFloat(value.odd);
+          if (value.value === 'Away') odds.away = parseFloat(value.odd);
+        });
+      }
+      if (bet.id === 5) { // Over/Under 2.5
+        bet.values?.forEach((value: any) => {
+          if (value.value === 'Over 2.5') odds.over25 = parseFloat(value.odd);
+          if (value.value === 'Under 2.5') odds.under25 = parseFloat(value.odd);
+        });
+      }
+      if (bet.id === 8) { // Both Teams To Score
+        bet.values?.forEach((value: any) => {
+          if (value.value === 'Yes') odds.btts = parseFloat(value.odd);
+        });
+      }
+    });
+
+    return Object.keys(odds).length > 0 ? odds : undefined;
+  } catch (error) {
+    console.error('Errore recupero odds:', error);
+    return undefined;
+  }
+}
+
+/**
+ * Recupera predizioni AI
+ */
+async function fetchPredictions(fixtureId: number, apiKey: string) {
+  try {
+    const url = `https://api-football-v1.p.rapidapi.com/v3/predictions?fixture=${fixtureId}`;
+    const response = await fetch(url, {
+      headers: {
+        'X-RapidAPI-Key': apiKey,
+        'X-RapidAPI-Host': 'api-football-v1.p.rapidapi.com'
+      }
+    });
+
+    if (!response.ok) {
+      console.warn(`⚠️ Errore predictions (${response.status})`);
+      return undefined;
+    }
+
+    const data = await response.json();
+    if (!data.response || !Array.isArray(data.response) || data.response.length === 0) {
+      return undefined;
+    }
+
+    const prediction = data.response[0];
+    return {
+      winner: prediction.winner ? {
+        id: prediction.winner.id,
+        name: prediction.winner.name,
+        comment: prediction.winner.comment || ''
+      } : undefined,
+      under_over: prediction.under_over || undefined,
+      goals: prediction.goals ? {
+        home: prediction.goals.home,
+        away: prediction.goals.away
+      } : undefined,
+      btts: prediction.btts ? prediction.btts === 'Yes' : undefined,
+      advice: prediction.advice || undefined
+    };
+  } catch (error) {
+    console.error('Errore recupero predictions:', error);
+    return undefined;
+  }
 }
 

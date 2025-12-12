@@ -87,6 +87,19 @@ export interface Database {
         Insert: Omit<Database['public']['Tables']['user_strategies']['Row'], 'id' | 'created_at' | 'updated_at'>;
         Update: Partial<Database['public']['Tables']['user_strategies']['Insert']>;
       };
+      match_analyses: {
+        Row: {
+          id: string;
+          user_id: string;
+          match_id: number;
+          match_date: string;
+          analysis_data: any; // JSONB field
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: Omit<Database['public']['Tables']['match_analyses']['Row'], 'id' | 'created_at' | 'updated_at'>;
+        Update: Partial<Database['public']['Tables']['match_analyses']['Insert']>;
+      };
     };
   };
 }
