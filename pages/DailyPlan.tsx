@@ -21,6 +21,57 @@ const DailyPlan: React.FC = () => {
   const [currentAnalysis, setCurrentAnalysis] = useState<ProfessionalMatchAnalysis | null>(null);
   const [strategyNames, setStrategyNames] = useState<Record<number, string>>({});
 
+  // Salva le partite in localStorage
+  const saveMatchesToStorage = (matches: MatchWithStats[], strategyNames: Record<number, string>) => {
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      localStorage.setItem('daily_plan_matches', JSON.stringify({
+        date: today,
+        matches: matches,
+        strategyNames: strategyNames
+      }));
+    } catch (error) {
+      console.error('Errore salvataggio:', error);
+    }
+  };
+
+  // Carica le partite da localStorage
+  const loadMatchesFromStorage = () => {
+    try {
+      const stored = localStorage.getItem('daily_plan_matches');
+      if (!stored) return null;
+      
+      const data = JSON.parse(stored);
+      const today = new Date().toISOString().split('T')[0];
+      
+      // Se sono di oggi, le carico
+      if (data.date === today && data.matches?.length > 0) {
+        return data;
+      }
+      
+      // Altrimenti elimino i dati vecchi
+      localStorage.removeItem('daily_plan_matches');
+      return null;
+    } catch (error) {
+      return null;
+    }
+  };
+
+  // Carica automaticamente le partite salvate quando il componente si monta
+  useEffect(() => {
+    const saved = loadMatchesFromStorage();
+    if (saved) {
+      setMatches(saved.matches);
+      setStrategyNames(saved.strategyNames || {});
+      
+      // Aggiorna anche i nomi delle strategie dal database e salva se ci sono aggiornamenti
+      if (user?.id && saved.matches.length > 0) {
+        const matchIds = saved.matches.map(m => m.stats.match.id);
+        loadStrategyNames(user.id, matchIds, saved.matches);
+      }
+    }
+  }, [user]);
+
   // Funzioni per salvare e caricare le analisi
   const saveMatchAnalysis = async (
     userId: string,
@@ -105,7 +156,7 @@ const DailyPlan: React.FC = () => {
     return strategyName;
   };
 
-  const loadStrategyNames = async (userId: string, matchIds: number[]) => {
+  const loadStrategyNames = async (userId: string, matchIds: number[], matchesToSave?: MatchWithStats[]) => {
     if (matchIds.length === 0) return;
     
     try {
@@ -124,9 +175,50 @@ const DailyPlan: React.FC = () => {
           namesMap[item.match_id] = getStrategyShortName(analysis);
         });
         setStrategyNames(namesMap);
+        
+        // Salva anche in localStorage se ci sono partite da salvare
+        if (matchesToSave && matchesToSave.length > 0) {
+          saveMatchesToStorage(matchesToSave, namesMap);
+        }
       }
     } catch (error) {
       console.error('❌ Errore caricamento nomi strategie:', error);
+    }
+  };
+
+  // Salva le partite in localStorage
+  const saveMatchesToStorage = (matches: MatchWithStats[], strategyNames: Record<number, string>) => {
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      localStorage.setItem('daily_plan_matches', JSON.stringify({
+        date: today,
+        matches: matches,
+        strategyNames: strategyNames
+      }));
+    } catch (error) {
+      console.error('Errore salvataggio:', error);
+    }
+  };
+
+  // Carica le partite da localStorage
+  const loadMatchesFromStorage = () => {
+    try {
+      const stored = localStorage.getItem('daily_plan_matches');
+      if (!stored) return null;
+      
+      const data = JSON.parse(stored);
+      const today = new Date().toISOString().split('T')[0];
+      
+      // Se sono di oggi, le carico
+      if (data.date === today && data.matches?.length > 0) {
+        return data;
+      }
+      
+      // Altrimenti elimino i dati vecchi
+      localStorage.removeItem('daily_plan_matches');
+      return null;
+    } catch (error) {
+      return null;
     }
   };
 
@@ -175,10 +267,13 @@ const DailyPlan: React.FC = () => {
 
       setMatches(matchesWithStats);
 
-      // Carica i nomi delle strategie salvate
+      // Carica i nomi delle strategie salvate e salva in localStorage
       if (user?.id && matchesWithStats.length > 0) {
         const matchIds = matchesWithStats.map(m => m.stats.match.id);
-        await loadStrategyNames(user.id, matchIds);
+        await loadStrategyNames(user.id, matchIds, matchesWithStats);
+      } else {
+        // Salva comunque anche se non ci sono strategie
+        saveMatchesToStorage(matchesWithStats, strategyNames);
       }
     } catch (error: any) {
       setError(`Errore: ${error.message || 'Errore sconosciuto'}`);
@@ -228,10 +323,19 @@ const DailyPlan: React.FC = () => {
       
       // Aggiorna il nome della strategia nello stato
       if (selectedMatch.stats.match.id) {
-        setStrategyNames(prev => ({
-          ...prev,
-          [selectedMatch.stats.match.id]: getStrategyShortName(analysis)
-        }));
+        setStrategyNames(prev => {
+          const updated = {
+            ...prev,
+            [selectedMatch.stats.match.id]: getStrategyShortName(analysis)
+          };
+          
+          // Salva anche in localStorage se ci sono partite caricate
+          if (matches.length > 0) {
+            saveMatchesToStorage(matches, updated);
+          }
+          
+          return updated;
+        });
       }
       
       // Salva l'analisi nel database
