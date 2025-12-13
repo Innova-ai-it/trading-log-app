@@ -120,6 +120,122 @@ export interface TodayMatch {
 }
 
 /**
+ * Sistema di rate limiting globale per gestire le chiamate API
+ */
+class RateLimiter {
+  private queue: Array<() => Promise<any>> = [];
+  private processing = false;
+  private lastRequestTime = 0;
+  private minDelay = 1000; // 1 secondo minimo tra le chiamate
+  private maxDelay = 5000; // 5 secondi massimo in caso di rate limit
+
+  async execute<T>(fn: () => Promise<T>, priority: 'high' | 'low' = 'low'): Promise<T> {
+    return new Promise((resolve, reject) => {
+      const task = async () => {
+        try {
+          const result = await fn();
+          resolve(result);
+        } catch (error) {
+          reject(error);
+        }
+      };
+
+      if (priority === 'high') {
+        this.queue.unshift(task); // Aggiungi in cima per priorità alta
+      } else {
+        this.queue.push(task); // Aggiungi in fondo per priorità bassa
+      }
+
+      this.processQueue();
+    });
+  }
+
+  private async processQueue() {
+    if (this.processing || this.queue.length === 0) {
+      return;
+    }
+
+    this.processing = true;
+
+    while (this.queue.length > 0) {
+      const task = this.queue.shift();
+      if (!task) break;
+
+      // Calcola delay basato su quanto tempo è passato dall'ultima richiesta
+      const timeSinceLastRequest = Date.now() - this.lastRequestTime;
+      const delay = Math.max(0, this.minDelay - timeSinceLastRequest);
+
+      if (delay > 0) {
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+
+      this.lastRequestTime = Date.now();
+      await task();
+    }
+
+    this.processing = false;
+  }
+
+  async waitAfterRateLimit(): Promise<void> {
+    // Aspetta più a lungo dopo un rate limit
+    await new Promise(resolve => setTimeout(resolve, this.maxDelay));
+  }
+}
+
+const rateLimiter = new RateLimiter();
+
+/**
+ * Wrapper per fetch con retry e backoff esponenziale
+ */
+async function fetchWithRetry(
+  url: string,
+  options: RequestInit,
+  maxRetries: number = 3,
+  baseDelay: number = 2000
+): Promise<Response> {
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      const response = await fetch(url, options);
+
+      if (response.ok) {
+        return response;
+      }
+
+      if (response.status === 429) {
+        // Rate limit: backoff esponenziale
+        const delay = baseDelay * Math.pow(2, attempt);
+        console.warn(`⏳ Rate limit (tentativo ${attempt + 1}/${maxRetries}), attendo ${delay}ms...`);
+        await rateLimiter.waitAfterRateLimit();
+        await new Promise(resolve => setTimeout(resolve, delay));
+        continue; // Riprova
+      }
+
+      // Altri errori: non riprovare
+      if (response.status >= 400 && response.status < 500) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      // Errori server: riprova
+      if (attempt < maxRetries - 1) {
+        const delay = baseDelay * Math.pow(2, attempt);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        continue;
+      }
+
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    } catch (error: any) {
+      if (attempt === maxRetries - 1) {
+        throw error;
+      }
+      const delay = baseDelay * Math.pow(2, attempt);
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+
+  throw new Error('Max retries reached');
+}
+
+/**
  * Recupera tutte le partite del giorno per i top campionati
  */
 export async function fetchTodayMatches(): Promise<TodayMatch[]> {
@@ -217,33 +333,54 @@ export async function fetchPreMatchStats(match: TodayMatch): Promise<MatchPreMat
   const apiKey = import.meta.env.VITE_FOOTBALL_API_KEY;
   const currentSeason = new Date().getFullYear();
 
-  // Usa endpoint più efficienti: statistiche stagionali invece di ultimi 5 match
-  // Promise.all esegue le chiamate in parallelo (più veloce)
-  const [homeTeamStats, awayTeamStats] = await Promise.all([
-    fetchTeamSeasonStats(match.teams.home.id, match.league.id, currentSeason, apiKey),
-    fetchTeamSeasonStats(match.teams.away.id, match.league.id, currentSeason, apiKey)
-  ]);
+  // PRIORITÀ ALTA: Statistiche squadre (essenziali) - sequenziali per evitare rate limit
+  const homeTeamStats = await rateLimiter.execute(
+    () => fetchTeamSeasonStats(match.teams.home.id, match.league.id, currentSeason, apiKey),
+    'high'
+  );
+  
+  const awayTeamStats = await rateLimiter.execute(
+    () => fetchTeamSeasonStats(match.teams.away.id, match.league.id, currentSeason, apiKey),
+    'high'
+  );
 
-  // Recupera dati aggiuntivi in parallelo (con fallback se falliscono)
-  const [standings, h2h, injuries, odds, predictions] = await Promise.allSettled([
-    fetchStandings(match.league.id, currentSeason, apiKey),
-    fetchHeadToHead(match.teams.home.id, match.teams.away.id, apiKey),
-    fetchInjuries(match.teams.home.id, match.teams.away.id, apiKey),
-    fetchOdds(match.fixture.id, apiKey),
-    fetchPredictions(match.fixture.id, apiKey)
-  ]);
+  // PRIORITÀ BASSA: Dati aggiuntivi (non essenziali) - sequenziali
+  const standings = await rateLimiter.execute(
+    () => fetchStandings(match.league.id, currentSeason, apiKey).catch(() => []),
+    'low'
+  );
+
+  const h2h = await rateLimiter.execute(
+    () => fetchHeadToHead(match.teams.home.id, match.teams.away.id, apiKey).catch(() => undefined),
+    'low'
+  );
+
+  const injuries = await rateLimiter.execute(
+    () => fetchInjuries(match.teams.home.id, match.teams.away.id, apiKey).catch(() => ({ home: [], away: [] })),
+    'low'
+  );
+
+  const odds = await rateLimiter.execute(
+    () => fetchOdds(match.fixture.id, apiKey).catch(() => undefined),
+    'low'
+  );
+
+  const predictions = await rateLimiter.execute(
+    () => fetchPredictions(match.fixture.id, apiKey).catch(() => undefined),
+    'low'
+  );
 
   // Estrai dati standings per home e away
-  const homeStanding = standings.status === 'fulfilled' 
-    ? standings.value.find((s: any) => s.team.id === match.teams.home.id)
+  const homeStanding = Array.isArray(standings)
+    ? standings.find((s: any) => s.team.id === match.teams.home.id)
     : null;
-  const awayStanding = standings.status === 'fulfilled'
-    ? standings.value.find((s: any) => s.team.id === match.teams.away.id)
+  const awayStanding = Array.isArray(standings)
+    ? standings.find((s: any) => s.team.id === match.teams.away.id)
     : null;
 
   // Estrai infortuni
-  const homeInjuries = injuries.status === 'fulfilled' ? injuries.value.home : [];
-  const awayInjuries = injuries.status === 'fulfilled' ? injuries.value.away : [];
+  const homeInjuries = injuries?.home || [];
+  const awayInjuries = injuries?.away || [];
 
   // Calcola statistiche combinate
   const combinedGoalsFH = homeTeamStats.goalsFH + awayTeamStats.goalsFH;
@@ -286,9 +423,9 @@ export async function fetchPreMatchStats(match: TodayMatch): Promise<MatchPreMat
       scoringPattern,
       xGFirstHalfAvg: (homeTeamStats.xGFirstHalfAvg + awayTeamStats.xGFirstHalfAvg) / 2
     },
-    headToHead: h2h.status === 'fulfilled' ? h2h.value : undefined,
-    odds: odds.status === 'fulfilled' ? odds.value : undefined,
-    predictions: predictions.status === 'fulfilled' ? predictions.value : undefined
+    headToHead: h2h,
+    odds: odds,
+    predictions: predictions
   };
 }
 
@@ -311,47 +448,36 @@ async function fetchTeamSeasonStats(
   xGFirstHalfAvg: number;
 }> {
   try {
-    // 1 chiamata per statistiche stagionali complete
     const statsUrl = `https://api-football-v1.p.rapidapi.com/v3/teams/statistics?team=${teamId}&league=${leagueId}&season=${season}`;
     
-    const statsResponse = await fetch(statsUrl, {
+    console.log(`📡 [Team ${teamId}] Richiesta statistiche: ${statsUrl}`);
+    
+    const statsResponse = await fetchWithRetry(statsUrl, {
       headers: {
         'X-RapidAPI-Key': apiKey,
         'X-RapidAPI-Host': 'api-football-v1.p.rapidapi.com'
       }
     });
 
-    if (!statsResponse.ok) {
-      if (statsResponse.status === 429) {
-        // Rate limit: aspetta e riprova una volta
-        console.warn(`⏳ Rate limit per team ${teamId}, attendo 2 secondi...`);
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        // Riprova
-        const retryResponse = await fetch(statsUrl, {
-          headers: {
-            'X-RapidAPI-Key': apiKey,
-            'X-RapidAPI-Host': 'api-football-v1.p.rapidapi.com'
-          }
-        });
-        if (!retryResponse.ok) {
-          return getDefaultTeamStats();
-        }
-        const retryData = await retryResponse.json();
-        return parseTeamStatistics(retryData.response, teamId);
-      }
+    const statsData = await statsResponse.json();
+    
+    // Debug: verifica struttura risposta
+    if (!statsData.response) {
+      console.error(`❌ [Team ${teamId}] Risposta API senza campo 'response':`, statsData);
       return getDefaultTeamStats();
     }
-
-    const statsData = await statsResponse.json();
+    
     const stats = statsData.response;
-
-    if (!stats) {
+    
+    // Verifica che stats sia un oggetto valido
+    if (!stats || typeof stats !== 'object' || Array.isArray(stats)) {
+      console.error(`❌ [Team ${teamId}] Stats non valido:`, stats);
       return getDefaultTeamStats();
     }
 
     return parseTeamStatistics(stats, teamId);
   } catch (error) {
-    console.error(`Errore statistiche stagionali team ${teamId}:`, error);
+    console.error(`❌ [Team ${teamId}] Errore statistiche stagionali:`, error);
     return getDefaultTeamStats();
   }
 }
@@ -375,6 +501,15 @@ function parseTeamStatistics(stats: any, teamId: number): {
     return isNaN(num) ? defaultValue : num;
   };
 
+  // Debug: log della struttura dati ricevuta
+  console.log(`🔍 [Team ${teamId}] Struttura dati ricevuta:`, {
+    hasGoalsFor: !!stats.goals?.for,
+    hasMinuteData: !!stats.goals?.for?.minute,
+    hasAverage: !!stats.goals?.for?.average,
+    hasTotal: !!stats.goals?.for?.total,
+    hasFixtures: !!stats.fixtures?.played
+  });
+
   // Estrai dati dalle statistiche stagionali - assicura sempre numeri
   const avgGoalsFor = toNumber(
     stats.goals?.for?.average?.total || 
@@ -396,7 +531,7 @@ function parseTeamStatistics(stats: any, teamId: number): {
   let goalsFH = 0;
   let goalsSH = 0;
   
-  if (stats.goals?.for?.minute) {
+  if (stats.goals?.for?.minute && typeof stats.goals.for.minute === 'object') {
     const minuteData = stats.goals.for.minute;
     // Somma goal da 0-15, 16-30, 31-45 per primo tempo
     goalsFH = toNumber(minuteData['0-15']?.total, 0) + 
@@ -408,11 +543,16 @@ function parseTeamStatistics(stats: any, teamId: number): {
               toNumber(minuteData['76-90']?.total, 0) + 
               toNumber(minuteData['91-105']?.total, 0) + 
               toNumber(minuteData['106-120']?.total, 0);
+    
+    console.log(`✅ [Team ${teamId}] Goal estratti da minute data: FH=${goalsFH}, SH=${goalsSH}`);
   } else {
     // Fallback: stima basata su media (40% primo tempo, 60% secondo)
-    const totalGoals = toNumber(stats.goals?.for?.total, avgGoalsFor * (toNumber(stats.fixtures?.played?.total, 1)));
+    const matchesPlayed = toNumber(stats.fixtures?.played?.total, 1);
+    const totalGoals = toNumber(stats.goals?.for?.total, avgGoalsFor * matchesPlayed);
     goalsFH = Math.round(totalGoals * 0.4);
     goalsSH = Math.round(totalGoals * 0.6);
+    
+    console.warn(`⚠️ [Team ${teamId}] Usando fallback per goal: FH=${goalsFH}, SH=${goalsSH} (total=${totalGoals}, matches=${matchesPlayed})`);
   }
   
   // Form: usa gli ultimi risultati disponibili
@@ -458,17 +598,12 @@ function getDefaultTeamStats() {
 async function fetchStandings(leagueId: number, season: number, apiKey: string): Promise<any[]> {
   try {
     const url = `https://api-football-v1.p.rapidapi.com/v3/standings?league=${leagueId}&season=${season}`;
-    const response = await fetch(url, {
+    const response = await fetchWithRetry(url, {
       headers: {
         'X-RapidAPI-Key': apiKey,
         'X-RapidAPI-Host': 'api-football-v1.p.rapidapi.com'
       }
     });
-
-    if (!response.ok) {
-      console.warn(`⚠️ Errore standings (${response.status})`);
-      return [];
-    }
 
     const data = await response.json();
     if (data.response && data.response[0]?.league?.standings?.[0]) {
@@ -476,7 +611,7 @@ async function fetchStandings(leagueId: number, season: number, apiKey: string):
     }
     return [];
   } catch (error) {
-    console.error('Errore recupero standings:', error);
+    console.warn(`⚠️ Errore standings:`, error);
     return [];
   }
 }
@@ -487,17 +622,12 @@ async function fetchStandings(leagueId: number, season: number, apiKey: string):
 async function fetchHeadToHead(homeId: number, awayId: number, apiKey: string) {
   try {
     const url = `https://api-football-v1.p.rapidapi.com/v3/fixtures/headtohead?h2h=${homeId}-${awayId}`;
-    const response = await fetch(url, {
+    const response = await fetchWithRetry(url, {
       headers: {
         'X-RapidAPI-Key': apiKey,
         'X-RapidAPI-Host': 'api-football-v1.p.rapidapi.com'
       }
     });
-
-    if (!response.ok) {
-      console.warn(`⚠️ Errore H2H (${response.status})`);
-      return undefined;
-    }
 
     const data = await response.json();
     if (!data.response || !Array.isArray(data.response) || data.response.length === 0) {
@@ -547,7 +677,7 @@ async function fetchHeadToHead(homeId: number, awayId: number, apiKey: string) {
       recentMatches: h2hMatches
     };
   } catch (error) {
-    console.error('Errore recupero H2H:', error);
+    console.warn(`⚠️ Errore H2H:`, error);
     return undefined;
   }
 }
@@ -557,20 +687,26 @@ async function fetchHeadToHead(homeId: number, awayId: number, apiKey: string) {
  */
 async function fetchInjuries(homeId: number, awayId: number, apiKey: string) {
   try {
-    const [homeResponse, awayResponse] = await Promise.all([
-      fetch(`https://api-football-v1.p.rapidapi.com/v3/injuries?team=${homeId}`, {
+    // Sequenziali invece di paralleli per evitare rate limit
+    const homeResponse = await fetchWithRetry(
+      `https://api-football-v1.p.rapidapi.com/v3/injuries?team=${homeId}`,
+      {
         headers: {
           'X-RapidAPI-Key': apiKey,
           'X-RapidAPI-Host': 'api-football-v1.p.rapidapi.com'
         }
-      }),
-      fetch(`https://api-football-v1.p.rapidapi.com/v3/injuries?team=${awayId}`, {
+      }
+    );
+
+    const awayResponse = await fetchWithRetry(
+      `https://api-football-v1.p.rapidapi.com/v3/injuries?team=${awayId}`,
+      {
         headers: {
           'X-RapidAPI-Key': apiKey,
           'X-RapidAPI-Host': 'api-football-v1.p.rapidapi.com'
         }
-      })
-    ]);
+      }
+    );
 
     const homeInjuries: string[] = [];
     const awayInjuries: string[] = [];
@@ -599,7 +735,7 @@ async function fetchInjuries(homeId: number, awayId: number, apiKey: string) {
 
     return { home: homeInjuries, away: awayInjuries };
   } catch (error) {
-    console.error('Errore recupero infortuni:', error);
+    console.warn(`⚠️ Errore recupero infortuni:`, error);
     return { home: [], away: [] };
   }
 }
@@ -610,17 +746,12 @@ async function fetchInjuries(homeId: number, awayId: number, apiKey: string) {
 async function fetchOdds(fixtureId: number, apiKey: string) {
   try {
     const url = `https://api-football-v1.p.rapidapi.com/v3/odds?fixture=${fixtureId}`;
-    const response = await fetch(url, {
+    const response = await fetchWithRetry(url, {
       headers: {
         'X-RapidAPI-Key': apiKey,
         'X-RapidAPI-Host': 'api-football-v1.p.rapidapi.com'
       }
     });
-
-    if (!response.ok) {
-      console.warn(`⚠️ Errore odds (${response.status})`);
-      return undefined;
-    }
 
     const data = await response.json();
     if (!data.response || !Array.isArray(data.response) || data.response.length === 0) {
@@ -657,7 +788,7 @@ async function fetchOdds(fixtureId: number, apiKey: string) {
 
     return Object.keys(odds).length > 0 ? odds : undefined;
   } catch (error) {
-    console.error('Errore recupero odds:', error);
+    console.warn(`⚠️ Errore recupero odds:`, error);
     return undefined;
   }
 }
@@ -668,17 +799,12 @@ async function fetchOdds(fixtureId: number, apiKey: string) {
 async function fetchPredictions(fixtureId: number, apiKey: string) {
   try {
     const url = `https://api-football-v1.p.rapidapi.com/v3/predictions?fixture=${fixtureId}`;
-    const response = await fetch(url, {
+    const response = await fetchWithRetry(url, {
       headers: {
         'X-RapidAPI-Key': apiKey,
         'X-RapidAPI-Host': 'api-football-v1.p.rapidapi.com'
       }
     });
-
-    if (!response.ok) {
-      console.warn(`⚠️ Errore predictions (${response.status})`);
-      return undefined;
-    }
 
     const data = await response.json();
     if (!data.response || !Array.isArray(data.response) || data.response.length === 0) {
@@ -701,7 +827,7 @@ async function fetchPredictions(fixtureId: number, apiKey: string) {
       advice: prediction.advice || undefined
     };
   } catch (error) {
-    console.error('Errore recupero predictions:', error);
+    console.warn(`⚠️ Errore recupero predictions:`, error);
     return undefined;
   }
 }

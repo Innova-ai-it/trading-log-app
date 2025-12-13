@@ -21,8 +21,60 @@ const DailyPlan: React.FC = () => {
   const [currentAnalysis, setCurrentAnalysis] = useState<ProfessionalMatchAnalysis | null>(null);
   const [strategyNames, setStrategyNames] = useState<Record<number, string>>({});
 
-  // Salva le partite in localStorage
-  const saveMatchesToStorage = (matches: MatchWithStats[], strategyNames: Record<number, string>) => {
+  // Salva le partite nel database
+  const saveMatchesToDatabase = async (matches: MatchWithStats[], strategyNames: Record<number, string>) => {
+    if (!user?.id) return;
+    
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      
+      // Cerca se esiste già un piano per oggi
+      const { data: existingPlan } = await supabase
+        .from('trading_plans')
+        .select('id')
+        .eq('user_id', user.id)
+        .eq('plan_date', today)
+        .single();
+
+      const matchesData = {
+        matches: matches,
+        strategyNames: strategyNames,
+        date: today
+      };
+
+      if (existingPlan) {
+        // Aggiorna il piano esistente
+        const { error } = await supabase
+          .from('trading_plans')
+          .update({
+            matches_analyzed: matchesData,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', existingPlan.id);
+
+        if (error) throw error;
+        console.log('✅ Partite aggiornate nel database');
+      } else {
+        // Crea un nuovo piano
+        const { error } = await supabase
+          .from('trading_plans')
+          .insert({
+            user_id: user.id,
+            plan_date: today,
+            plan_content: `Piano giornaliero con ${matches.length} partite`,
+            matches_analyzed: matchesData
+          });
+
+        if (error) throw error;
+        console.log('✅ Partite salvate nel database');
+      }
+    } catch (error) {
+      console.error('❌ Errore salvataggio partite nel database:', error);
+    }
+  };
+
+  // Salva le partite in localStorage e nel database
+  const saveMatchesToStorage = async (matches: MatchWithStats[], strategyNames: Record<number, string>) => {
     try {
       const today = new Date().toISOString().split('T')[0];
       localStorage.setItem('daily_plan_matches', JSON.stringify({
@@ -30,6 +82,9 @@ const DailyPlan: React.FC = () => {
         matches: matches,
         strategyNames: strategyNames
       }));
+      
+      // Salva anche nel database
+      await saveMatchesToDatabase(matches, strategyNames);
     } catch (error) {
       console.error('Errore salvataggio:', error);
     }
@@ -57,19 +112,86 @@ const DailyPlan: React.FC = () => {
     }
   };
 
+  // Carica le partite dal database
+  const loadMatchesFromDatabase = async (): Promise<{ matches: MatchWithStats[], strategyNames: Record<number, string> } | null> => {
+    if (!user?.id) return null;
+
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      
+      const { data, error } = await supabase
+        .from('trading_plans')
+        .select('matches_analyzed')
+        .eq('user_id', user.id)
+        .eq('plan_date', today)
+        .single();
+
+      if (error) {
+        if (error.code === 'PGRST116') {
+          // Nessun piano trovato per oggi
+          return null;
+        }
+        throw error;
+      }
+
+      if (data?.matches_analyzed) {
+        const matchesData = data.matches_analyzed as any;
+        // Verifica che la data corrisponda a oggi
+        if (matchesData.date === today && matchesData.matches?.length > 0) {
+          return {
+            matches: matchesData.matches,
+            strategyNames: matchesData.strategyNames || {}
+          };
+        }
+      }
+
+      return null;
+    } catch (error) {
+      console.error('❌ Errore caricamento partite dal database:', error);
+      return null;
+    }
+  };
+
   // Carica automaticamente le partite salvate quando il componente si monta
   useEffect(() => {
-    const saved = loadMatchesFromStorage();
-    if (saved) {
-      setMatches(saved.matches);
-      setStrategyNames(saved.strategyNames || {});
-      
-      // Aggiorna anche i nomi delle strategie dal database e salva se ci sono aggiornamenti
-      if (user?.id && saved.matches.length > 0) {
-        const matchIds = saved.matches.map(m => m.stats.match.id);
-        loadStrategyNames(user.id, matchIds, saved.matches);
+    const loadMatches = async () => {
+      // Prima prova a caricare da localStorage
+      const saved = loadMatchesFromStorage();
+      if (saved) {
+        setMatches(saved.matches);
+        setStrategyNames(saved.strategyNames || {});
+        
+        if (user?.id && saved.matches.length > 0) {
+          const matchIds = saved.matches.map(m => m.stats.match.id);
+          await loadStrategyNames(user.id, matchIds, saved.matches);
+        }
+        return;
       }
-    }
+
+      // Se non ci sono in localStorage, prova a caricare dal database
+      if (user?.id) {
+        const dbMatches = await loadMatchesFromDatabase();
+        if (dbMatches) {
+          setMatches(dbMatches.matches);
+          setStrategyNames(dbMatches.strategyNames || {});
+          
+          // Salva anche in localStorage per performance future
+          const today = new Date().toISOString().split('T')[0];
+          localStorage.setItem('daily_plan_matches', JSON.stringify({
+            date: today,
+            matches: dbMatches.matches,
+            strategyNames: dbMatches.strategyNames
+          }));
+          
+          if (dbMatches.matches.length > 0) {
+            const matchIds = dbMatches.matches.map(m => m.stats.match.id);
+            await loadStrategyNames(user.id, matchIds, dbMatches.matches);
+          }
+        }
+      }
+    };
+
+    loadMatches();
   }, [user]);
 
   // Funzioni per salvare e caricare le analisi
@@ -178,47 +300,11 @@ const DailyPlan: React.FC = () => {
         
         // Salva anche in localStorage se ci sono partite da salvare
         if (matchesToSave && matchesToSave.length > 0) {
-          saveMatchesToStorage(matchesToSave, namesMap);
+          await saveMatchesToStorage(matchesToSave, namesMap);
         }
       }
     } catch (error) {
       console.error('❌ Errore caricamento nomi strategie:', error);
-    }
-  };
-
-  // Salva le partite in localStorage
-  const saveMatchesToStorage = (matches: MatchWithStats[], strategyNames: Record<number, string>) => {
-    try {
-      const today = new Date().toISOString().split('T')[0];
-      localStorage.setItem('daily_plan_matches', JSON.stringify({
-        date: today,
-        matches: matches,
-        strategyNames: strategyNames
-      }));
-    } catch (error) {
-      console.error('Errore salvataggio:', error);
-    }
-  };
-
-  // Carica le partite da localStorage
-  const loadMatchesFromStorage = () => {
-    try {
-      const stored = localStorage.getItem('daily_plan_matches');
-      if (!stored) return null;
-      
-      const data = JSON.parse(stored);
-      const today = new Date().toISOString().split('T')[0];
-      
-      // Se sono di oggi, le carico
-      if (data.date === today && data.matches?.length > 0) {
-        return data;
-      }
-      
-      // Altrimenti elimino i dati vecchi
-      localStorage.removeItem('daily_plan_matches');
-      return null;
-    } catch (error) {
-      return null;
     }
   };
 
@@ -249,10 +335,7 @@ const DailyPlan: React.FC = () => {
           const stats = await fetchPreMatchStats(match);
           matchesWithStats.push({ match, stats });
           
-          // Pausa per evitare rate limiting
-          if (i < todayMatches.length - 1) {
-            await new Promise(resolve => setTimeout(resolve, 300));
-          }
+          // Il delay è ora gestito dal rate limiter globale
         } catch (error: any) {
           console.error(`❌ Errore statistiche per ${match.teams?.home?.name} vs ${match.teams?.away?.name}:`, error.message || error);
           // Continua con le altre partite anche se una fallisce
@@ -273,7 +356,7 @@ const DailyPlan: React.FC = () => {
         await loadStrategyNames(user.id, matchIds, matchesWithStats);
       } else {
         // Salva comunque anche se non ci sono strategie
-        saveMatchesToStorage(matchesWithStats, strategyNames);
+        await saveMatchesToStorage(matchesWithStats, strategyNames);
       }
     } catch (error: any) {
       setError(`Errore: ${error.message || 'Errore sconosciuto'}`);
@@ -331,7 +414,9 @@ const DailyPlan: React.FC = () => {
           
           // Salva anche in localStorage se ci sono partite caricate
           if (matches.length > 0) {
-            saveMatchesToStorage(matches, updated);
+            saveMatchesToStorage(matches, updated).catch(err => 
+              console.error('Errore salvataggio partite:', err)
+            );
           }
           
           return updated;
