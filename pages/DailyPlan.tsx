@@ -398,8 +398,7 @@ const DailyPlan: React.FC = () => {
     
     try {
       const analysis = await generateProfessionalMatchAnalysis(
-        selectedMatch,
-        user?.id
+        selectedMatch
       );
       
       setCurrentAnalysis(analysis);
