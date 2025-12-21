@@ -1,27 +1,115 @@
 import React, { useState, useEffect } from 'react';
-import { fetchTodayMatches, fetchPreMatchStats, MatchPreMatchStats } from '../utils/dailyPlanService';
+import { fetchTodayMatches, fetchPreMatchStats, MatchPreMatchStats, TodayMatch } from '../utils/dailyPlanService';
 import { generateProfessionalMatchAnalysis, ProfessionalMatchAnalysis } from '../utils/professionalMatchAnalysis';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
-import { Loader2, Calendar, TrendingUp, X, Clock, AlertCircle, Sparkles, TrendingDown, Target, AlertTriangle } from 'lucide-react';
+import { Loader2, Calendar, TrendingUp, X, Clock, AlertCircle, Sparkles, TrendingDown, Target, AlertTriangle, Filter } from 'lucide-react';
 
 interface MatchWithStats {
   match: any;
   stats: MatchPreMatchStats;
 }
 
+interface MatchWithoutStats {
+  match: TodayMatch;
+  stats: null;
+}
+
+type MatchData = MatchWithStats | MatchWithoutStats;
+
 const DailyPlan: React.FC = () => {
   const { user } = useAuth();
   const [loading, setLoading] = useState(false);
-  const [matches, setMatches] = useState<MatchWithStats[]>([]);
+  const [matches, setMatches] = useState<MatchData[]>([]);
   const [selectedMatch, setSelectedMatch] = useState<MatchWithStats | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loadingAnalysis, setLoadingAnalysis] = useState(false);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [currentAnalysis, setCurrentAnalysis] = useState<ProfessionalMatchAnalysis | null>(null);
   const [strategyNames, setStrategyNames] = useState<Record<number, string>>({});
+  const [loadingStats, setLoadingStats] = useState<Record<number, boolean>>({});
+  
+  // Stati per i filtri
+  const [selectedLeague, setSelectedLeague] = useState<string>('all');
+  const [selectedTime, setSelectedTime] = useState<string>('all');
 
-  // Salva le partite nel database
+  // Helper per verificare se una partita ha statistiche
+  const hasStats = (matchData: MatchData): matchData is MatchWithStats => {
+    return matchData.stats !== null;
+  };
+
+  // Funzioni per estrarre competizioni e orari unici dalle partite
+  const getAvailableLeagues = (): string[] => {
+    const leagues = new Set<string>();
+    matches.forEach(matchData => {
+      if (hasStats(matchData)) {
+        leagues.add(matchData.stats.match.leagueName);
+      } else {
+        const matchWithoutStats = matchData as MatchWithoutStats;
+        if (matchWithoutStats.match.league?.name) {
+          leagues.add(matchWithoutStats.match.league.name);
+        }
+      }
+    });
+    return Array.from(leagues).sort();
+  };
+
+  const getAvailableTimes = (): string[] => {
+    const times = new Set<string>();
+    matches.forEach(matchData => {
+      if (hasStats(matchData)) {
+        times.add(matchData.stats.match.time);
+      } else {
+        const matchWithoutStats = matchData as MatchWithoutStats;
+        if (matchWithoutStats.match.fixture?.date) {
+          const time = new Date(matchWithoutStats.match.fixture.date).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+          times.add(time);
+        }
+      }
+    });
+    return Array.from(times).sort();
+  };
+
+  // Funzione per filtrare le partite
+  const getFilteredMatches = (): MatchData[] => {
+    // Se entrambi i filtri sono su 'all', restituisci tutte le partite
+    if (selectedLeague === 'all' && selectedTime === 'all') {
+      return matches;
+    }
+
+    return matches.filter(matchData => {
+      // Filtro per competizione
+      let leagueMatch = true;
+      if (selectedLeague !== 'all') {
+        if (hasStats(matchData)) {
+          leagueMatch = matchData.stats.match.leagueName === selectedLeague;
+        } else {
+          const matchWithoutStats = matchData as MatchWithoutStats;
+          leagueMatch = matchWithoutStats.match.league?.name === selectedLeague;
+        }
+      }
+
+      // Filtro per orario
+      let timeMatch = true;
+      if (selectedTime !== 'all') {
+        if (hasStats(matchData)) {
+          timeMatch = matchData.stats.match.time === selectedTime;
+        } else {
+          const matchWithoutStats = matchData as MatchWithoutStats;
+          if (matchWithoutStats.match.fixture?.date) {
+            const time = new Date(matchWithoutStats.match.fixture.date).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+            timeMatch = time === selectedTime;
+          } else {
+            timeMatch = false;
+          }
+        }
+      }
+
+      return leagueMatch && timeMatch;
+    });
+  };
+
+  // Salva le partite nel database (solo quelle con statistiche)
   const saveMatchesToDatabase = async (matches: MatchWithStats[], strategyNames: Record<number, string>) => {
     if (!user?.id) return;
     
@@ -74,7 +162,7 @@ const DailyPlan: React.FC = () => {
   };
 
   // Salva le partite in localStorage e nel database
-  const saveMatchesToStorage = async (matches: MatchWithStats[], strategyNames: Record<number, string>) => {
+  const saveMatchesToStorage = async (matches: MatchData[], strategyNames: Record<number, string>) => {
     try {
       const today = new Date().toISOString().split('T')[0];
       localStorage.setItem('daily_plan_matches', JSON.stringify({
@@ -83,8 +171,11 @@ const DailyPlan: React.FC = () => {
         strategyNames: strategyNames
       }));
       
-      // Salva anche nel database
-      await saveMatchesToDatabase(matches, strategyNames);
+      // Salva anche nel database solo le partite con statistiche
+      const matchesWithStats = matches.filter(hasStats) as MatchWithStats[];
+      if (matchesWithStats.length > 0) {
+        await saveMatchesToDatabase(matchesWithStats, strategyNames);
+      }
     } catch (error) {
       console.error('Errore salvataggio:', error);
     }
@@ -113,7 +204,7 @@ const DailyPlan: React.FC = () => {
   };
 
   // Carica le partite dal database
-  const loadMatchesFromDatabase = async (): Promise<{ matches: MatchWithStats[], strategyNames: Record<number, string> } | null> => {
+  const loadMatchesFromDatabase = async (): Promise<{ matches: MatchData[], strategyNames: Record<number, string> } | null> => {
     if (!user?.id) return null;
 
     try {
@@ -162,8 +253,11 @@ const DailyPlan: React.FC = () => {
         setStrategyNames(saved.strategyNames || {});
         
         if (user?.id && saved.matches.length > 0) {
-          const matchIds = saved.matches.map(m => m.stats.match.id);
-          await loadStrategyNames(user.id, matchIds, saved.matches);
+          const matchesWithStats = saved.matches.filter(hasStats) as MatchWithStats[];
+          if (matchesWithStats.length > 0) {
+            const matchIds = matchesWithStats.map(m => m.stats.match.id);
+            await loadStrategyNames(user.id, matchIds, matchesWithStats);
+          }
         }
         return;
       }
@@ -184,8 +278,11 @@ const DailyPlan: React.FC = () => {
           }));
           
           if (dbMatches.matches.length > 0) {
-            const matchIds = dbMatches.matches.map(m => m.stats.match.id);
-            await loadStrategyNames(user.id, matchIds, dbMatches.matches);
+            const matchesWithStats = dbMatches.matches.filter(hasStats) as MatchWithStats[];
+            if (matchesWithStats.length > 0) {
+              const matchIds = matchesWithStats.map(m => m.stats.match.id);
+              await loadStrategyNames(user.id, matchIds, matchesWithStats);
+            }
           }
         }
       }
@@ -193,6 +290,12 @@ const DailyPlan: React.FC = () => {
 
     loadMatches();
   }, [user]);
+
+  // Reset filtri quando cambiano le partite
+  useEffect(() => {
+    setSelectedLeague('all');
+    setSelectedTime('all');
+  }, [matches.length]);
 
   // Funzioni per salvare e caricare le analisi
   const saveMatchAnalysis = async (
@@ -322,46 +425,59 @@ const DailyPlan: React.FC = () => {
         return;
       }
 
-      // 2. Recupera statistiche per ogni partita
-      const matchesWithStats: MatchWithStats[] = [];
-      
-      console.log(`📊 Processando statistiche per ${todayMatches.length} partite`);
-      
-      for (let i = 0; i < todayMatches.length; i++) {
-        const match = todayMatches[i];
-        try {
-          console.log(`📈 [${i + 1}/${todayMatches.length}] Recupero statistiche per ${match.teams?.home?.name} vs ${match.teams?.away?.name}`);
-          
-          const stats = await fetchPreMatchStats(match);
-          matchesWithStats.push({ match, stats });
-          
-          // Il delay è ora gestito dal rate limiter globale
-        } catch (error: any) {
-          console.error(`❌ Errore statistiche per ${match.teams?.home?.name} vs ${match.teams?.away?.name}:`, error.message || error);
-          // Continua con le altre partite anche se una fallisce
-        }
-      }
+      // 2. Crea array di partite senza statistiche
+      const matchesWithoutStats: MatchWithoutStats[] = todayMatches.map(match => ({
+        match,
+        stats: null
+      }));
 
-      if (matchesWithStats.length === 0) {
-        setError('Impossibile recuperare statistiche per le partite. Verifica la configurazione API.');
-        setLoading(false);
-        return;
-      }
+      setMatches(matchesWithoutStats);
 
-      setMatches(matchesWithStats);
-
-      // Carica i nomi delle strategie salvate e salva in localStorage
-      if (user?.id && matchesWithStats.length > 0) {
-        const matchIds = matchesWithStats.map(m => m.stats.match.id);
-        await loadStrategyNames(user.id, matchIds, matchesWithStats);
-      } else {
-        // Salva comunque anche se non ci sono strategie
-        await saveMatchesToStorage(matchesWithStats, strategyNames);
-      }
+      // Salva in localStorage
+      await saveMatchesToStorage(matchesWithoutStats, strategyNames);
     } catch (error: any) {
       setError(`Errore: ${error.message || 'Errore sconosciuto'}`);
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Funzione per caricare statistiche per una singola partita
+  const handleLoadStats = async (matchData: MatchWithoutStats) => {
+    const matchId = matchData.match.fixture.id;
+    setLoadingStats(prev => ({ ...prev, [matchId]: true }));
+    
+    try {
+      const stats = await fetchPreMatchStats(matchData.match);
+      const matchWithStats: MatchWithStats = {
+        match: matchData.match,
+        stats
+      };
+
+      // Aggiorna la partita nello stato
+      setMatches(prev => prev.map(m => 
+        m.match.fixture.id === matchId ? matchWithStats : m
+      ));
+
+      // Salva le partite aggiornate
+      const updatedMatches = matches.map(m => 
+        m.match.fixture.id === matchId ? matchWithStats : m
+      );
+      await saveMatchesToStorage(updatedMatches, strategyNames);
+
+      // Carica i nomi delle strategie se necessario
+      if (user?.id) {
+        const matchesWithStats = updatedMatches.filter(hasStats) as MatchWithStats[];
+        if (matchesWithStats.length > 0) {
+          const matchIds = matchesWithStats.map(m => m.stats.match.id);
+          await loadStrategyNames(user.id, matchIds, matchesWithStats);
+        }
+      }
+    } catch (error: any) {
+      console.error(`Errore caricamento statistiche:`, error);
+      setError(`Errore caricamento statistiche per ${matchData.match.teams?.home?.name} vs ${matchData.match.teams?.away?.name}: ${error.message || 'Errore sconosciuto'}`);
+    } finally {
+      setLoadingStats(prev => ({ ...prev, [matchId]: false }));
     }
   };
 
@@ -413,9 +529,12 @@ const DailyPlan: React.FC = () => {
           
           // Salva anche in localStorage se ci sono partite caricate
           if (matches.length > 0) {
-            saveMatchesToStorage(matches, updated).catch(err => 
-              console.error('Errore salvataggio partite:', err)
-            );
+            const matchesWithStats = matches.filter(hasStats) as MatchWithStats[];
+            if (matchesWithStats.length > 0) {
+              saveMatchesToStorage(matches, updated).catch(err => 
+                console.error('Errore salvataggio partite:', err)
+              );
+            }
           }
           
           return updated;
@@ -468,7 +587,7 @@ const DailyPlan: React.FC = () => {
             Partite di Oggi
           </h1>
           <p className="text-gray-400 mt-1">
-            Carica le partite dei top campionati con statistiche dettagliate
+            Carica le partite dei top campionati prefiltrate
           </p>
         </div>
         <button
@@ -507,92 +626,221 @@ const DailyPlan: React.FC = () => {
         </div>
       )}
 
+      {/* Filtri */}
+      {matches.length > 0 && (
+        <div className="bg-surface rounded-xl border border-border p-4">
+          <div className="flex items-center gap-2 mb-4">
+            <Filter className="w-5 h-5 text-blue-400" />
+            <h2 className="text-lg font-semibold text-white">Filtri</h2>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Filtro Competizione */}
+            <div>
+              <label className="block text-sm font-medium text-gray-400 mb-2">
+                Competizione
+              </label>
+              <select
+                value={selectedLeague}
+                onChange={(e) => setSelectedLeague(e.target.value)}
+                className="w-full bg-background border border-border rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              >
+                <option value="all">Tutte le competizioni</option>
+                {getAvailableLeagues().map(league => (
+                  <option key={league} value={league}>
+                    {league}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Filtro Orario */}
+            <div>
+              <label className="block text-sm font-medium text-gray-400 mb-2">
+                Orario
+              </label>
+              <select
+                value={selectedTime}
+                onChange={(e) => setSelectedTime(e.target.value)}
+                className="w-full bg-background border border-border rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              >
+                <option value="all">Tutti gli orari</option>
+                {getAvailableTimes().map(time => (
+                  <option key={time} value={time}>
+                    {time}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+          
+          {/* Pulsante Reset Filtri */}
+          <div className="mt-4 flex items-center justify-between">
+            {(selectedLeague !== 'all' || selectedTime !== 'all') && (
+              <span className="text-xs text-gray-500">
+                Filtri attivi
+              </span>
+            )}
+            <button
+              onClick={(e) => {
+                e.preventDefault();
+                setSelectedLeague('all');
+                setSelectedTime('all');
+              }}
+              disabled={selectedLeague === 'all' && selectedTime === 'all'}
+              className="text-sm text-blue-400 hover:text-blue-300 underline disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:text-blue-400 transition-colors"
+              type="button"
+            >
+              Reset filtri
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Contatore Partite */}
       {matches.length > 0 && (
         <div className="flex items-center gap-2 text-sm text-gray-400">
           <TrendingUp className="w-4 h-4" />
-          <span>{matches.length} partite caricate</span>
+          <span>
+            {getFilteredMatches().length} di {matches.length} partite
+            {(selectedLeague !== 'all' || selectedTime !== 'all') && ' (filtrate)'}
+          </span>
         </div>
       )}
 
       {/* Matches Grid */}
       {matches.length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {matches.map((matchWithStats) => {
-            const { match, stats } = matchWithStats;
+          {getFilteredMatches().map((matchData) => {
+            const matchId = matchData.match.fixture.id;
+            const isLoadingStats = loadingStats[matchId] || false;
+            
+            // Se la partita ha statistiche, mostra i dati completi
+            if (hasStats(matchData)) {
+              const { match, stats } = matchData;
+              return (
+                <div
+                  key={stats.match.id}
+                  onClick={async () => {
+                    setSelectedMatch(matchData);
+                    setCurrentAnalysis(null);
+                    
+                    if (user?.id && stats.match.id) {
+                      const savedAnalysis = await loadMatchAnalysis(
+                        user.id,
+                        stats.match.id
+                      );
+                      if (savedAnalysis) {
+                        setCurrentAnalysis(savedAnalysis);
+                      }
+                    }
+                  }}
+                  className="bg-surface rounded-xl border border-border p-5 cursor-pointer hover:border-blue-500/50 transition-all hover:shadow-lg hover:shadow-blue-500/10"
+                >
+                  <div className="flex items-start justify-between mb-3">
+                    <div className="flex-1">
+                      <h3 className="text-white font-semibold text-lg">
+                        {stats.homeTeam.name}
+                      </h3>
+                      <p className="text-gray-400 text-sm">vs</p>
+                      <h3 className="text-white font-semibold text-lg">
+                        {stats.awayTeam.name}
+                      </h3>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-gray-400 text-sm">{stats.match.leagueName}</p>
+                      <div className="flex items-center gap-1 text-gray-400 text-sm mt-1">
+                        <Clock className="w-3 h-3" />
+                        {stats.match.time}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2 mt-4 pt-4 border-t border-border/50">
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-gray-400">Media Goal:</span>
+                      <span className="text-white font-medium">{safeNumber(stats.combined.avgGoalsPerMatch)}</span>
+                    </div>
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-gray-400">Goal FH (ultimi 5):</span>
+                      <span className="text-white font-medium">{stats.combined.goalsFirstHalf}</span>
+                    </div>
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-gray-400">Goal SH (ultimi 5):</span>
+                      <span className="text-white font-medium">{stats.combined.goalsSecondHalf}</span>
+                    </div>
+                    {stats.combined.goalsFirstHalf + stats.combined.goalsSecondHalf > 0 && (
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-gray-400">Distribuzione:</span>
+                        <span className="text-white font-medium text-xs">
+                          {Math.round((stats.combined.goalsFirstHalf / (stats.combined.goalsFirstHalf + stats.combined.goalsSecondHalf)) * 100)}% FH / 
+                          {Math.round((stats.combined.goalsSecondHalf / (stats.combined.goalsFirstHalf + stats.combined.goalsSecondHalf)) * 100)}% SH
+                        </span>
+                      </div>
+                    )}
+                    <div className="mt-3">
+                      <span className={`inline-block px-2 py-1 rounded text-xs font-medium border ${getPatternColor(stats.combined.scoringPattern)}`}>
+                        Pattern: {getPatternLabel(stats.combined.scoringPattern)}
+                      </span>
+                    </div>
+                    {strategyNames[stats.match.id] && (
+                      <div className="mt-2">
+                        <span className="inline-block px-3 py-1 rounded text-xs font-semibold bg-purple-500/20 text-purple-400 border border-purple-500/30">
+                          {strategyNames[stats.match.id]}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            }
+            
+            // Se la partita NON ha statistiche, mostra card semplice con pulsante per caricare statistiche
+            const matchWithoutStats = matchData as MatchWithoutStats;
             return (
               <div
-                key={stats.match.id}
-                onClick={async () => {
-                  setSelectedMatch(matchWithStats);
-                  setCurrentAnalysis(null); // Reset temporaneo
-                  
-                  // Carica l'analisi salvata se esiste
-                  if (user?.id && matchWithStats.stats.match.id) {
-                    const savedAnalysis = await loadMatchAnalysis(
-                      user.id,
-                      matchWithStats.stats.match.id
-                    );
-                    if (savedAnalysis) {
-                      setCurrentAnalysis(savedAnalysis);
-                    }
-                  }
-                }}
-                className="bg-surface rounded-xl border border-border p-5 cursor-pointer hover:border-blue-500/50 transition-all hover:shadow-lg hover:shadow-blue-500/10"
+                key={matchId}
+                className="bg-surface rounded-xl border border-border p-5"
               >
                 <div className="flex items-start justify-between mb-3">
                   <div className="flex-1">
                     <h3 className="text-white font-semibold text-lg">
-                      {stats.homeTeam.name}
+                      {matchWithoutStats.match.teams?.home?.name || 'Squadra Casa'}
                     </h3>
                     <p className="text-gray-400 text-sm">vs</p>
                     <h3 className="text-white font-semibold text-lg">
-                      {stats.awayTeam.name}
+                      {matchWithoutStats.match.teams?.away?.name || 'Squadra Ospiti'}
                     </h3>
                   </div>
                   <div className="text-right">
-                    <p className="text-gray-400 text-sm">{stats.match.leagueName}</p>
+                    <p className="text-gray-400 text-sm">{matchWithoutStats.match.league?.name || 'Campionato'}</p>
                     <div className="flex items-center gap-1 text-gray-400 text-sm mt-1">
                       <Clock className="w-3 h-3" />
-                      {stats.match.time}
+                      {matchWithoutStats.match.fixture?.date ? new Date(matchWithoutStats.match.fixture.date).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' }) : 'N/A'}
                     </div>
                   </div>
                 </div>
 
-                <div className="space-y-2 mt-4 pt-4 border-t border-border/50">
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-gray-400">Media Goal:</span>
-                    <span className="text-white font-medium">{safeNumber(stats.combined.avgGoalsPerMatch)}</span>
-                  </div>
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-gray-400">Goal FH (ultimi 5):</span>
-                    <span className="text-white font-medium">{stats.combined.goalsFirstHalf}</span>
-                  </div>
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-gray-400">Goal SH (ultimi 5):</span>
-                    <span className="text-white font-medium">{stats.combined.goalsSecondHalf}</span>
-                  </div>
-                  {stats.combined.goalsFirstHalf + stats.combined.goalsSecondHalf > 0 && (
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="text-gray-400">Distribuzione:</span>
-                      <span className="text-white font-medium text-xs">
-                        {Math.round((stats.combined.goalsFirstHalf / (stats.combined.goalsFirstHalf + stats.combined.goalsSecondHalf)) * 100)}% FH / 
-                        {Math.round((stats.combined.goalsSecondHalf / (stats.combined.goalsFirstHalf + stats.combined.goalsSecondHalf)) * 100)}% SH
-                      </span>
-                    </div>
-                  )}
-                  <div className="mt-3">
-                    <span className={`inline-block px-2 py-1 rounded text-xs font-medium border ${getPatternColor(stats.combined.scoringPattern)}`}>
-                      Pattern: {getPatternLabel(stats.combined.scoringPattern)}
-                    </span>
-                  </div>
-                  {strategyNames[stats.match.id] && (
-                    <div className="mt-2">
-                      <span className="inline-block px-3 py-1 rounded text-xs font-semibold bg-purple-500/20 text-purple-400 border border-purple-500/30">
-                        {strategyNames[stats.match.id]}
-                      </span>
-                    </div>
-                  )}
+                <div className="mt-4 pt-4 border-t border-border/50">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleLoadStats(matchWithoutStats);
+                    }}
+                    disabled={isLoadingStats}
+                    className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 rounded-lg text-white font-medium transition-all shadow-lg shadow-green-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isLoadingStats ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Caricamento statistiche...
+                      </>
+                    ) : (
+                      <>
+                        <TrendingUp className="w-4 h-4" />
+                        Carica Statistiche
+                      </>
+                    )}
+                  </button>
                 </div>
               </div>
             );
@@ -1208,7 +1456,7 @@ const DailyPlan: React.FC = () => {
             Nessuna partita caricata
           </p>
           <p className="text-sm text-gray-500">
-            Clicca il pulsante sopra per caricare le partite di oggi con statistiche dettagliate
+            Clicca il pulsante sopra per caricare le partite di oggi prefiltrate
           </p>
         </div>
       )}
