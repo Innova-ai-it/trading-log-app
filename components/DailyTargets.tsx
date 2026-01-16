@@ -58,10 +58,16 @@ export const DailyTargets: React.FC = () => {
     const tpHit = settings.dailyTP > 0 && todayPL >= tpTarget;
     const slHit = settings.dailySL < 0 && todayPL <= slTarget;
 
+    // Calculate ROI percentage
+    const roiPercentage = startOfDayBankroll > 0 
+      ? (todayPL / startOfDayBankroll) * 100 
+      : 0;
+
     return {
       startOfDayBankroll,
       currentBankroll,
       todayPL,
+      roiPercentage,
       tpTarget,
       slTarget,
       tpRemaining,
@@ -79,10 +85,10 @@ export const DailyTargets: React.FC = () => {
   }
 
   return (
-    <div className="flex gap-2 md:gap-3 items-center min-w-max md:min-w-0">
+    <div className="flex flex-col md:flex-row gap-2 md:gap-3 items-stretch md:items-center w-full md:min-w-0">
       {/* Daily Take Profit */}
       {dailyStats.tpPercentage > 0 && (
-        <div className={`relative px-3 md:px-4 py-2 rounded-lg border transition-all flex-shrink-0 ${
+        <div className={`relative px-2.5 md:px-4 py-1.5 md:py-2 rounded-lg border transition-all flex-1 md:flex-shrink-0 ${
           dailyStats.tpHit 
             ? 'bg-green-500/20 border-green-500/50 shadow-lg shadow-green-500/20' 
             : 'bg-surface border-border'
@@ -100,10 +106,15 @@ export const DailyTargets: React.FC = () => {
                 Daily Take Profit
               </div>
               <div className="flex items-baseline gap-1 md:gap-2 flex-wrap">
-                <span className={`text-xs md:text-sm font-bold font-mono ${
+                <span className={`text-sm md:text-base font-bold font-mono ${
                   dailyStats.tpHit ? 'text-green-400' : 'text-white'
                 }`}>
                   {formatCurrency(dailyStats.tpTarget)}
+                </span>
+                <span className={`text-[9px] md:text-[10px] font-medium ${
+                  dailyStats.tpHit ? 'text-green-400' : 'text-green-500'
+                }`}>
+                  (+{dailyStats.tpPercentage.toFixed(2)}%)
                 </span>
                 {!dailyStats.tpHit ? (
                   <span className="text-[9px] md:text-[10px] text-gray-500 whitespace-nowrap">
@@ -125,7 +136,7 @@ export const DailyTargets: React.FC = () => {
 
       {/* Daily Stop Loss */}
       {dailyStats.slPercentage < 0 && (
-        <div className={`relative px-3 md:px-4 py-2 rounded-lg border transition-all flex-shrink-0 ${
+        <div className={`relative px-2.5 md:px-4 py-1.5 md:py-2 rounded-lg border transition-all flex-1 md:flex-shrink-0 ${
           dailyStats.slHit 
             ? 'bg-red-500/20 border-red-500/50 shadow-lg shadow-red-500/20' 
             : 'bg-surface border-border'
@@ -143,10 +154,15 @@ export const DailyTargets: React.FC = () => {
                 Daily Stop Loss
               </div>
               <div className="flex items-baseline gap-1 md:gap-2 flex-wrap">
-                <span className={`text-xs md:text-sm font-bold font-mono ${
+                <span className={`text-sm md:text-base font-bold font-mono ${
                   dailyStats.slHit ? 'text-red-400' : 'text-white'
                 }`}>
                   {formatCurrency(dailyStats.slTarget)}
+                </span>
+                <span className={`text-[9px] md:text-[10px] font-medium ${
+                  dailyStats.slHit ? 'text-red-400' : 'text-red-500'
+                }`}>
+                  ({dailyStats.slPercentage.toFixed(2)}%)
                 </span>
                 {!dailyStats.slHit ? (
                   <span className="text-[9px] md:text-[10px] text-gray-500 whitespace-nowrap">
@@ -167,20 +183,31 @@ export const DailyTargets: React.FC = () => {
       )}
 
       {/* Current Day P/L indicator */}
-      <div className="px-2.5 md:px-3 py-2 rounded-lg bg-background border border-border flex-shrink-0">
+      <div className="px-2.5 md:px-3 py-1.5 md:py-2 rounded-lg bg-background border border-border flex-1 md:flex-shrink-0">
         <div className="flex items-center gap-1.5 md:gap-2">
           <Target className="w-3.5 h-3.5 md:w-4 md:h-4 text-blue-400 flex-shrink-0" />
           <div className="min-w-0">
             <div className="text-[9px] md:text-[10px] text-gray-400 uppercase font-medium whitespace-nowrap">
               Today P/L
             </div>
-            <span className={`text-xs md:text-sm font-bold font-mono ${
-              dailyStats.todayPL > 0 ? 'text-success' : 
-              dailyStats.todayPL < 0 ? 'text-danger' : 
-              'text-gray-400'
-            }`}>
-              {dailyStats.todayPL > 0 ? '+' : ''}{formatCurrency(dailyStats.todayPL)}
-            </span>
+            <div className="flex items-baseline gap-1 md:gap-2 flex-wrap">
+              <span className={`text-sm md:text-base font-bold font-mono ${
+                dailyStats.todayPL > 0 ? 'text-success' : 
+                dailyStats.todayPL < 0 ? 'text-danger' : 
+                'text-gray-400'
+              }`}>
+                {dailyStats.todayPL > 0 ? '+' : ''}{formatCurrency(dailyStats.todayPL)}
+              </span>
+              {dailyStats.startOfDayBankroll > 0 && (
+                <span className={`text-[9px] md:text-[10px] font-medium ${
+                  dailyStats.roiPercentage > 0 ? 'text-success' : 
+                  dailyStats.roiPercentage < 0 ? 'text-danger' : 
+                  'text-gray-500'
+                }`}>
+                  ({dailyStats.roiPercentage > 0 ? '+' : ''}{dailyStats.roiPercentage.toFixed(2)}%)
+                </span>
+              )}
+            </div>
           </div>
         </div>
       </div>

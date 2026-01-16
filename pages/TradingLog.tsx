@@ -95,7 +95,7 @@ const TradingLog: React.FC = () => {
         </div>
         
         {/* Daily Targets Row - Mobile optimized */}
-        <div className="w-full overflow-x-auto -mx-1 px-1">
+        <div className="w-full">
           <DailyTargets />
         </div>
         

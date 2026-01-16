@@ -181,13 +181,13 @@ const Dashboard: React.FC = () => {
 
       {/* KPI Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bg-surface p-6 rounded-xl border border-border">
+        <div className="bg-surface p-4 md:p-6 rounded-xl border border-border">
           <div className="flex justify-between items-start">
             <div>
               <p className="text-sm text-gray-400">Current Bankroll</p>
-              <h3 className="text-2xl font-bold text-white mt-1">{formatCurrency(metrics.currentBankroll)}</h3>
+              <h3 className="text-xl md:text-2xl font-bold text-white mt-1">{formatCurrency(metrics.currentBankroll)}</h3>
             </div>
-            <div className="p-2 bg-blue-500/20 rounded-lg text-blue-500">
+            <div className="p-2 bg-blue-500/20 rounded-lg text-blue-500 flex-shrink-0">
               <DollarSign className="w-5 h-5" />
             </div>
           </div>
@@ -201,15 +201,15 @@ const Dashboard: React.FC = () => {
           </div>
         </div>
 
-        <div className="bg-surface p-6 rounded-xl border border-border">
+        <div className="bg-surface p-4 md:p-6 rounded-xl border border-border">
           <div className="flex justify-between items-start">
             <div>
               <p className="text-sm text-gray-400">Total Profit</p>
-              <h3 className={`text-2xl font-bold mt-1 ${metrics.totalProfit >= 0 ? 'text-success' : 'text-danger'}`}>
+              <h3 className={`text-xl md:text-2xl font-bold mt-1 ${metrics.totalProfit >= 0 ? 'text-success' : 'text-danger'}`}>
                 {metrics.totalProfit > 0 ? '+' : ''}{formatCurrency(metrics.totalProfit)}
               </h3>
             </div>
-            <div className={`p-2 rounded-lg ${metrics.totalProfit >= 0 ? 'bg-green-500/20 text-success' : 'bg-red-500/20 text-danger'}`}>
+            <div className={`p-2 rounded-lg flex-shrink-0 ${metrics.totalProfit >= 0 ? 'bg-green-500/20 text-success' : 'bg-red-500/20 text-danger'}`}>
               <TrendingUp className="w-5 h-5" />
             </div>
           </div>
@@ -218,13 +218,13 @@ const Dashboard: React.FC = () => {
           </div>
         </div>
 
-        <div className="bg-surface p-6 rounded-xl border border-border">
+        <div className="bg-surface p-4 md:p-6 rounded-xl border border-border">
           <div className="flex justify-between items-start">
             <div>
               <p className="text-sm text-gray-400">Win Rate</p>
-              <h3 className="text-2xl font-bold text-white mt-1">{metrics.winRate.toFixed(1)}%</h3>
+              <h3 className="text-xl md:text-2xl font-bold text-white mt-1">{metrics.winRate.toFixed(1)}%</h3>
             </div>
-            <div className="p-2 bg-yellow-500/20 rounded-lg text-yellow-500">
+            <div className="p-2 bg-yellow-500/20 rounded-lg text-yellow-500 flex-shrink-0">
               <Activity className="w-5 h-5" />
             </div>
           </div>
@@ -233,13 +233,13 @@ const Dashboard: React.FC = () => {
           </div>
         </div>
 
-        <div className="bg-surface p-6 rounded-xl border border-border">
+        <div className="bg-surface p-4 md:p-6 rounded-xl border border-border">
           <div className="flex justify-between items-start">
             <div>
               <p className="text-sm text-gray-400">Targets Hit</p>
-              <h3 className="text-2xl font-bold text-white mt-1">{metrics.dailyTPHits} TP / {metrics.dailySLHits} SL</h3>
+              <h3 className="text-xl md:text-2xl font-bold text-white mt-1">{metrics.dailyTPHits} TP / {metrics.dailySLHits} SL</h3>
             </div>
-            <div className="p-2 bg-purple-500/20 rounded-lg text-purple-500">
+            <div className="p-2 bg-purple-500/20 rounded-lg text-purple-500 flex-shrink-0">
               <Target className="w-5 h-5" />
             </div>
           </div>
@@ -250,14 +250,14 @@ const Dashboard: React.FC = () => {
       </div>
 
       {/* Current Streak Card */}
-      <div className="bg-surface p-6 rounded-xl border border-border">
-        <div className="flex items-center justify-between mb-4">
+      <div className="bg-surface p-4 md:p-6 rounded-xl border border-border">
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 md:gap-0 mb-4">
           <h3 className="text-lg font-semibold text-white flex items-center gap-2">
             <Zap className="w-5 h-5 text-yellow-500" />
             Current Streak
           </h3>
           {currentStreak.alert && (
-            <div className={`flex items-center gap-2 px-3 py-1 rounded-lg text-sm ${
+            <div className={`flex items-center gap-2 px-3 py-1 rounded-lg text-xs md:text-sm ${
               currentStreak.alert === 'OVER_CONFIDENCE' ? 'bg-yellow-500/20 text-yellow-400' :
               currentStreak.alert === 'REVENGE_TRADING' ? 'bg-red-500/20 text-red-400' :
               'bg-orange-500/20 text-orange-400'
@@ -274,37 +274,37 @@ const Dashboard: React.FC = () => {
           )}
         </div>
         
-        <div className="flex items-center gap-6">
+        <div className="flex flex-col md:flex-row md:items-center gap-4 md:gap-6">
           <div className="flex items-center gap-3">
             {currentStreak.type === 'WIN' && (
               <div className="flex items-center gap-2">
-                <div className="w-12 h-12 rounded-full bg-green-500/20 flex items-center justify-center">
-                  <Trophy className="w-6 h-6 text-green-400" />
+                <div className="w-10 h-10 md:w-12 md:h-12 rounded-full bg-green-500/20 flex items-center justify-center flex-shrink-0">
+                  <Trophy className="w-5 h-5 md:w-6 md:h-6 text-green-400" />
                 </div>
                 <div>
-                  <p className="text-2xl font-bold text-success">{currentStreak.count}</p>
+                  <p className="text-xl md:text-2xl font-bold text-success">{currentStreak.count}</p>
                   <p className="text-xs text-gray-400">Wins Consecutive</p>
                 </div>
               </div>
             )}
             {currentStreak.type === 'LOSE' && (
               <div className="flex items-center gap-2">
-                <div className="w-12 h-12 rounded-full bg-red-500/20 flex items-center justify-center">
-                  <Ban className="w-6 h-6 text-red-400" />
+                <div className="w-10 h-10 md:w-12 md:h-12 rounded-full bg-red-500/20 flex items-center justify-center flex-shrink-0">
+                  <Ban className="w-5 h-5 md:w-6 md:h-6 text-red-400" />
                 </div>
                 <div>
-                  <p className="text-2xl font-bold text-danger">{currentStreak.count}</p>
+                  <p className="text-xl md:text-2xl font-bold text-danger">{currentStreak.count}</p>
                   <p className="text-xs text-gray-400">Losses Consecutive</p>
                 </div>
               </div>
             )}
             {currentStreak.type === 'NONE' && (
               <div className="flex items-center gap-2">
-                <div className="w-12 h-12 rounded-full bg-gray-500/20 flex items-center justify-center">
-                  <Activity className="w-6 h-6 text-gray-400" />
+                <div className="w-10 h-10 md:w-12 md:h-12 rounded-full bg-gray-500/20 flex items-center justify-center flex-shrink-0">
+                  <Activity className="w-5 h-5 md:w-6 md:h-6 text-gray-400" />
                 </div>
                 <div>
-                  <p className="text-2xl font-bold text-gray-400">-</p>
+                  <p className="text-xl md:text-2xl font-bold text-gray-400">-</p>
                   <p className="text-xs text-gray-400">No streak</p>
                 </div>
               </div>
@@ -312,13 +312,13 @@ const Dashboard: React.FC = () => {
           </div>
           
           {currentStreak.last10Results.length > 0 && (
-            <div className="flex-1">
-              <p className="text-sm text-gray-400 mb-2">Last 10 trades:</p>
-              <div className="flex gap-1">
+            <div className="flex-1 w-full md:w-auto">
+              <p className="text-xs md:text-sm text-gray-400 mb-2">Last 10 trades:</p>
+              <div className="flex gap-1 flex-wrap">
                 {currentStreak.last10Results.map((result, idx) => (
                   <div
                     key={idx}
-                    className={`w-8 h-8 rounded flex items-center justify-center text-xs font-bold ${
+                    className={`w-7 h-7 md:w-8 md:h-8 rounded flex items-center justify-center text-xs font-bold flex-shrink-0 ${
                       result === 'W' ? 'bg-green-500/20 text-green-400' :
                       result === 'L' ? 'bg-red-500/20 text-red-400' :
                       'bg-gray-500/20 text-gray-400'
@@ -335,15 +335,15 @@ const Dashboard: React.FC = () => {
 
       {/* Additional Metrics Row */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bg-surface p-6 rounded-xl border border-border">
+        <div className="bg-surface p-4 md:p-6 rounded-xl border border-border">
           <div className="flex justify-between items-start">
             <div>
               <p className="text-sm text-gray-400">Profit Factor</p>
-              <h3 className={`text-2xl font-bold mt-1 ${metrics.profitFactor >= 1.5 ? 'text-success' : metrics.profitFactor >= 1 ? 'text-yellow-500' : 'text-danger'}`}>
+              <h3 className={`text-xl md:text-2xl font-bold mt-1 ${metrics.profitFactor >= 1.5 ? 'text-success' : metrics.profitFactor >= 1 ? 'text-yellow-500' : 'text-danger'}`}>
                 {metrics.profitFactor >= 999 ? '∞' : metrics.profitFactor.toFixed(2)}
               </h3>
             </div>
-            <div className="p-2 bg-cyan-500/20 rounded-lg text-cyan-500">
+            <div className="p-2 bg-cyan-500/20 rounded-lg text-cyan-500 flex-shrink-0">
               <Zap className="w-5 h-5" />
             </div>
           </div>
@@ -352,15 +352,15 @@ const Dashboard: React.FC = () => {
           </div>
         </div>
 
-        <div className="bg-surface p-6 rounded-xl border border-border">
+        <div className="bg-surface p-4 md:p-6 rounded-xl border border-border">
           <div className="flex justify-between items-start">
             <div>
               <p className="text-sm text-gray-400">Avg Profit/Trade</p>
-              <h3 className={`text-2xl font-bold mt-1 ${metrics.avgProfitPerTrade >= 0 ? 'text-success' : 'text-danger'}`}>
+              <h3 className={`text-xl md:text-2xl font-bold mt-1 ${metrics.avgProfitPerTrade >= 0 ? 'text-success' : 'text-danger'}`}>
                 {metrics.avgProfitPerTrade >= 0 ? '+' : ''}{formatCurrency(metrics.avgProfitPerTrade)}
               </h3>
             </div>
-            <div className="p-2 bg-indigo-500/20 rounded-lg text-indigo-500">
+            <div className="p-2 bg-indigo-500/20 rounded-lg text-indigo-500 flex-shrink-0">
               <Activity className="w-5 h-5" />
             </div>
           </div>
@@ -369,13 +369,13 @@ const Dashboard: React.FC = () => {
           </div>
         </div>
 
-        <div className="bg-surface p-6 rounded-xl border border-border">
+        <div className="bg-surface p-4 md:p-6 rounded-xl border border-border">
           <div className="flex justify-between items-start">
             <div>
               <p className="text-sm text-gray-400">Max Win Streak</p>
-              <h3 className="text-2xl font-bold text-success mt-1">{metrics.maxWinStreak}</h3>
+              <h3 className="text-xl md:text-2xl font-bold text-success mt-1">{metrics.maxWinStreak}</h3>
             </div>
-            <div className="p-2 bg-green-500/20 rounded-lg text-green-500">
+            <div className="p-2 bg-green-500/20 rounded-lg text-green-500 flex-shrink-0">
               <Trophy className="w-5 h-5" />
             </div>
           </div>
@@ -384,13 +384,13 @@ const Dashboard: React.FC = () => {
           </div>
         </div>
 
-        <div className="bg-surface p-6 rounded-xl border border-border">
+        <div className="bg-surface p-4 md:p-6 rounded-xl border border-border">
           <div className="flex justify-between items-start">
             <div>
               <p className="text-sm text-gray-400">Max Loss Streak</p>
-              <h3 className="text-2xl font-bold text-danger mt-1">{metrics.maxLossStreak}</h3>
+              <h3 className="text-xl md:text-2xl font-bold text-danger mt-1">{metrics.maxLossStreak}</h3>
             </div>
-            <div className="p-2 bg-red-500/20 rounded-lg text-red-500">
+            <div className="p-2 bg-red-500/20 rounded-lg text-red-500 flex-shrink-0">
               <Ban className="w-5 h-5" />
             </div>
           </div>
